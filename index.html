@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>垂直空域 (Vertical Airspace) - 側翼 MFD 完全體</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body class="theme-red">
+    <div id="startup-screen">
+        <div id="startup-text">
+            ENTERING COMBAT AIRSPACE...<br>
+            <span style="color: #ff0055; font-size: 24px; letter-spacing: 6px;">ENGAGEMENT AUTHORIZED</span>
+        </div>
+    </div>
+    <svg id="axis-widget" viewBox="-50 -50 100 100" style="position:absolute; top:20px; left:20px; width:80px; height:80px; pointer-events:none; z-index:10; overflow:visible;">
+        <line id="axis-x-line" x1="0" y1="0" x2="30" y2="0" stroke="#ff5252" stroke-width="3" stroke-linecap="round"/>
+        <text id="axis-x-label" x="35" y="4" fill="#ff5252" font-size="12" font-weight="bold" font-family="sans-serif">X</text>
+        <line id="axis-y-line" x1="0" y1="0" x2="0" y2="-30" stroke="#4caf50" stroke-width="3" stroke-linecap="round"/>
+        <text id="axis-y-label" x="0" y="-35" fill="#4caf50" font-size="12" font-weight="bold" font-family="sans-serif">Y</text>
+        <line id="axis-z-line" x1="0" y1="0" x2="-20" y2="20" stroke="#2196f3" stroke-width="3" stroke-linecap="round"/>
+        <text id="axis-z-label" x="-25" y="25" fill="#2196f3" font-size="12" font-weight="bold" font-family="sans-serif">Z</text>
+        <circle cx="0" cy="0" r="3" fill="#fff"/>
+    </svg>
+
+    <div id="replay-control-bar">
+        <span id="replay-status" style="color:#aaa; font-size:12px; font-weight:bold; letter-spacing:1px; margin-right: 15px;">狀態: 戰術規劃中</span>
+        <button id="btn-rep-play" class="replay-btn">▶ 播放</button>
+        <button id="btn-rep-exit" class="replay-btn" style="display:none; color:#ff3355; font-weight:bold; border-color:#ff3355;">↩ 返回座艙</button>
+        <div class="replay-timeline-container"><input type="range" id="replay-slider" min="1" max="1" value="1" step="0.01" disabled></div>
+    </div>
+
+    <div id="stall-screen"><div id="stall-text">⚠ STALL ⚠<br><span style="font-size:18px;">失速臨界：系統將強制修正航向</span></div></div>
+    <div id="combat-lock-screen"></div>
+    <div id="phase-banner" style="position: absolute; top: 30%; left: 0; width: 100vw; text-align: center; color: #fff; font-size: 38px; font-weight: bold; letter-spacing: 8px; text-shadow: 0 0 20px #ffeb3b, 0 0 10px #000; pointer-events: none; opacity: 0; transition: opacity 0.4s ease-in-out; z-index: 8500; font-family: 'Courier New', monospace;"></div>
+
+    <div id="sensor-panel">
+        <div class="sensor-header">📡 本機狀態儀</div>
+        <div id="sensor-list"></div>
+    </div>
+
+    <div id="alt-label-red" class="alt-label"></div>
+    <div id="alt-label-blue" class="alt-label"></div>
+    <div id="alt-label-ghost" class="alt-label"></div>
+    
+    <div id="canvas-container"></div>
+    
+    <div id="team-selector-panel" style="position: absolute; top: 20px; right: 20px; z-index: 9999; display: flex; gap: 10px;">
+        <button id="btn-sel-red" style="background: #ff0055; color: #fff; border: 2px solid #fff; padding: 8px 16px; font-weight: bold; cursor: pointer; border-radius: 4px; box-shadow: 0 0 10px rgba(255,0,85,0.5);">RED TEAM</button>
+        <button id="btn-sel-blue" style="background: #111; color: #00bcd4; border: 2px solid #444; padding: 8px 16px; font-weight: bold; cursor: pointer; border-radius: 4px;">BLUE TEAM</button>
+    </div>
+    
+    <div id="ui-wrapper">
+        <div id="combat-hud-mobile">
+            <div id="tactical-computer-module">
+                <div id="pylon-weapons-bay">
+                    <div class="pylon-switch-wrapper" data-pylon="1">
+                        <div class="pylon-label">PYLON 1</div>
+                        <div class="pylon-stick" id="pylon-stick-1"></div>
+                        <div class="pylon-lamp" id="pylon-lamp-1"></div>
+                    </div>
+                    <div class="pylon-switch-wrapper" data-pylon="2">
+                        <div class="pylon-label">PYLON 2</div>
+                        <div class="pylon-stick" id="pylon-stick-2"></div>
+                        <div class="pylon-lamp" id="pylon-lamp-2"></div>
+                    </div>
+                    <div class="pylon-switch-wrapper" data-pylon="3">
+                        <div class="pylon-label">PYLON 3</div>
+                        <div class="pylon-stick" id="pylon-stick-3"></div>
+                        <div class="pylon-lamp" id="pylon-lamp-3"></div>
+                    </div>
+                    <div class="pylon-switch-wrapper" data-pylon="4">
+                        <div class="pylon-label">PYLON 4</div>
+                        <div class="pylon-stick" id="pylon-stick-4"></div>
+                        <div class="pylon-lamp" id="pylon-lamp-4"></div>
+                    </div>
+                </div>
+                <div id="sms-display-screen">
+                    <div id="sms-text-content">狀態 [就緒] 機砲</div>
+                    <button id="sms-enter-btn">ENT</button>
+                </div>
+            </div>
+
+            <div id="u-shape-panel">
+                <div id="left-arm-throttle">
+                    <button class="thr-btn" id="btn-thr-3">後燃器</button>
+                    <button class="thr-btn active" id="btn-thr-2">巡航</button>
+                    <button class="thr-btn" id="btn-thr-1">低速</button>
+                </div>
+
+                <div id="center-stacked-zone">
+                    <div id="center-instruments">
+                        <div class="btn-column-side left-column">
+                            <button class="cockpit-rect-btn" id="btn-flare">FLARE [3]</button>
+                            <button class="cockpit-rect-btn btn-g-limit active" id="btn-glimiter">限制器</button>
+                            <div class="cockpit-rect-btn btn-empty">[預留]</div>
+                        </div>
+
+                        <div class="instruments-circle-core">
+                            <div class="gauge-dial-box">
+                                <svg class="gauge-dial" viewBox="0 0 100 100">
+                                    <circle class="dial-bg" cx="50" cy="50" r="45"/>
+                                    <g stroke="#3a3a3a" stroke-width="1.5">
+                                        <line x1="5" y1="50" x2="10" y2="50" />
+                                        <line x1="18.2" y1="18.2" x2="22.5" y2="22.5" />
+                                        <line x1="50" y1="5" x2="50" y2="10" />
+                                        <line x1="81.8" y1="18.2" x2="77.5" y2="22.5" />
+                                        <line x1="95" y1="50" x2="90" y2="50" />
+                                    </g>
+                                    <g fill="#777" font-size="6" font-family="monospace" font-weight="bold">
+                                        <text x="14" y="52" text-anchor="start">0</text>
+                                        <text x="24" y="31" text-anchor="start">50</text>
+                                        <text x="50" y="21" text-anchor="middle">100</text>
+                                        <text x="76" y="31" text-anchor="end">150</text>
+                                        <text x="86" y="52" text-anchor="end">200</text>
+                                    </g>
+                                    <text x="50" y="74" text-anchor="middle" fill="#555" font-size="8" font-weight="bold">CORE TEMP</text>
+                                    <line class="dial-needle" id="needle-heat" x1="50" y1="50" x2="50" y2="22" stroke="#ff9800" stroke-width="3" stroke-linecap="round"/>
+                                    <circle cx="50" cy="50" r="3" fill="#fff"/>
+                                </svg>
+                                <div class="digital-val"><span id="hud-val-heat">0</span>°C</div>
+                            </div>
+
+                            <div id="control-assembly-center">
+                                <div id="roll-ring">
+                                    <div class="nav-light light-port"></div>
+                                    <div class="nav-light light-starbd"></div>
+                                </div>
+                                <div id="joystick-zone">
+                                    <div id="joystick-handle"></div>
+                                </div>
+                            </div>
+
+                            <div class="gauge-dial-box">
+                                <svg class="gauge-dial" viewBox="0 0 100 100">
+                                    <circle class="dial-bg" cx="50" cy="50" r="45"/>
+                                    <g stroke="#3a3a3a" stroke-width="1.5">
+                                        <line x1="5" y1="50" x2="10" y2="50" />
+                                        <line x1="18.2" y1="18.2" x2="22.5" y2="22.5" />
+                                        <line x1="50" y1="5" x2="50" y2="10" />
+                                        <line x1="81.8" y1="18.2" x2="77.5" y2="22.5" />
+                                        <line x1="95" y1="50" x2="90" y2="50" />
+                                    </g>
+                                    <g fill="#777" font-size="6" font-family="monospace" font-weight="bold">
+                                        <text x="14" y="52" text-anchor="start">0</text>
+                                        <text x="24" y="31" text-anchor="start">25</text>
+                                        <text x="50" y="21" text-anchor="middle">50</text>
+                                        <text x="76" y="31" text-anchor="end">75</text>
+                                        <text x="86" y="52" text-anchor="end">100</text>
+                                    </g>
+                                    <text x="50" y="74" text-anchor="middle" fill="#555" font-size="8" font-weight="bold">ENG AP</text>
+                                    <line class="dial-needle" id="needle-ap" x1="50" y1="50" x2="50" y2="22" stroke="#00bcd4" stroke-width="3" stroke-linecap="round"/>
+                                    <circle cx="50" cy="50" r="3" fill="#fff"/>
+                                </svg>
+                                <div class="digital-val"><span id="hud-val-ap">0</span></div>
+                            </div>
+                        </div>
+
+                        <div class="btn-column-side right-column">
+                            <button class="cockpit-rect-btn btn-standby" id="btn-engage">待命</button>
+                            <div class="cockpit-rect-btn btn-empty">[預留]</div>
+                            <div class="cockpit-rect-btn btn-empty">[預留]</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="right-arm-hp">
+                    <div class="hp-track-vertical">
+                        <div id="hud-hp-fill-vertical"></div>
+                    </div>
+                    <div class="hp-text-label">HP</div>
+                </div>
+            </div>
+        </div>
+    </div>
+       
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+
+    <script src="config.js"></script>
+    <script src="globals.js"></script>
+    <script src="physics.js"></script>
+    <script src="render.js"></script>
+    <script src="combat.js"></script>
+    <script src="ui.js"></script>
+    <script src="game.js"></script>
+</body>
+</html>
