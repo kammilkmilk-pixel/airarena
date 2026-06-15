@@ -38,7 +38,7 @@ const flareGeo = new THREE.SphereGeometry(0.4, 8, 8); const expGeo = new THREE.S
 const flareMats = [ new THREE.MeshBasicMaterial({ color: 0xffff00, transparent: true, opacity: 1, blending: THREE.AdditiveBlending, depthWrite: false }), new THREE.MeshBasicMaterial({ color: 0xff8800, transparent: true, opacity: 0.8, blending: THREE.AdditiveBlending, depthWrite: false }), new THREE.MeshBasicMaterial({ color: 0x664422, transparent: true, opacity: 0.5, depthWrite: false }) ];
 const visualFlaresPool = [];
 
-// 🌟 獨立彈池：擴大容量以支援連續 3 回合開火 (24 * 3 * 2架飛機 = 足夠了)
+// 🌟 獨立彈池
 const maxVisualBullets = 150; 
 const visualBullets = [];
 for (let i = 0; i < maxVisualBullets; i++) {
@@ -120,7 +120,6 @@ function drawTrajectoryLine(teamObj) {
     } else { window.ghostWrapper.visible = false; }
 }
 
-// 🌟 修正版：移除強行繞回機身起點的閉合邏輯，還原成純淨自然的彈道拋物線
 function updateGunPreview(teamObj) {
     if (!teamObj.wrapper) return;
     if (!teamObj.userData) teamObj.userData = {};
@@ -141,7 +140,6 @@ function updateGunPreview(teamObj) {
         let ptIdx = 0;
         let T_now = 1.0; 
 
-        // 僅描繪這回合在天空中留下的真實子彈流彈道，不再連回過去的飛機
         for (let i = 0; i <= 30; i++) {
             let t_spawn = (i / 30) * 0.95; 
             let sPos = curve.getPointAt(t_spawn); 
@@ -152,7 +150,7 @@ function updateGunPreview(teamObj) {
             let dt = Math.max(0, T_now - t_spawn); 
             let travelDist = dt * dRange * 2.0; 
             let pt = nPos.clone().add(fwd.multiplyScalar(travelDist));
-            pt.y -= 0.5 * 9.8 * (dt * 2) * (dt * 2) * 0.5; // 考慮引力下墜
+            pt.y -= 0.5 * 9.8 * (dt * 2) * (dt * 2) * 0.5; 
             
             posArr[ptIdx*3] = pt.x; posArr[ptIdx*3+1] = pt.y; posArr[ptIdx*3+2] = pt.z; 
             ptIdx++;
@@ -207,7 +205,6 @@ function updateMissilePreview(teamObj) {
 function renderCombatFrame(currentLog, animProgress) {
     if (!currentLog || !battleLog) return;
     
-    // 取得當前影格的回合索引 (純函數式狀態推演，支援完美重播倒帶！)
     let turnIdx = battleLog.indexOf(currentLog);
     if (turnIdx === -1) return;
 
@@ -241,10 +238,8 @@ function renderCombatFrame(currentLog, animProgress) {
 
         if (t.userData && t.userData.gunPreview) t.userData.gunPreview.visible = false;
         
-        // 取得當前機鼻座標 (作為槍口錨點)
         let currentNosePos = currentPlanePos.clone().add(new THREE.Vector3(0, -0.2, 4.0).applyQuaternion(currentPlaneQuat));
 
-        // 🌟 無狀態時空回溯：往前翻找包含自己在內的「過去 3 個回合」的開火紀錄
         for (let age = 0; age <= 2; age++) {
             let logIdx = turnIdx - age;
             if (logIdx < 0) continue;
@@ -258,19 +253,15 @@ function renderCombatFrame(currentLog, animProgress) {
                 let dRange = GUN_RANGE * stats.gunRangeMult;
                 let pastCurve = new THREE.CatmullRomCurve3(pastLog[id].pts, false, 'catmullrom', 0);
 
-                // 繪製這回合產生的 24 發子彈
                 for (let b = 0; b < 24; b++) {
                     if (bulletIdx >= visualBullets.length) break;
                     let mesh = visualBullets[bulletIdx]; 
                     let t_spawn = (b / 23) * 0.95; 
 
-                    // 計算這顆子彈從發射到現在，總共飛了多少「回合時間」
                     let timeSinceSpawn = animProgress - t_spawn + age;
                     
-                    // 如果時間為負 (還沒發射)，或是飛太久 (超過 1.5 個回合)，就不畫它
                     if (timeSinceSpawn < 0 || timeSinceSpawn > 1.5) continue;
 
-                    // 找出發射瞬間的姿態與位置
                     let spawnPos = pastCurve.getPointAt(t_spawn); 
                     let spawnQuat = getQuatAt(t_spawn, pastLog[id].quats);
                     let noseOffset = new THREE.Vector3(0, -0.2, 4.0).applyQuaternion(spawnQuat); 
@@ -281,20 +272,17 @@ function renderCombatFrame(currentLog, animProgress) {
                     let right = new THREE.Vector3(1, 0, 0).applyQuaternion(spawnQuat); let up = new THREE.Vector3(0, 1, 0).applyQuaternion(spawnQuat);
                     forward.add(right.multiplyScalar(spreadX)).add(up.multiplyScalar(spreadY)).normalize();
                     
-                    // 根據總飛行時間計算彈頭位置
                     let travelDist = timeSinceSpawn * dRange * 2.0; 
                     let headPos = startPos.clone().add(forward.clone().multiplyScalar(travelDist));
                     let gravDrop = 0.5 * 9.8 * (timeSinceSpawn * 2) * (timeSinceSpawn * 2) * 0.5; 
                     headPos.y -= gravDrop;
 
-                    let tracerLen = 4; // 曳光彈長度
+                    let tracerLen = 4;
                     let tailPos;
 
-                    // 🌟 核心視覺欺騙：如果是這回合剛發射的子彈，且還沒完全脫離槍口，把尾巴死死黏在當前機鼻上！
                     if (age === 0 && travelDist < tracerLen) {
                         tailPos = currentNosePos.clone();
                     } else {
-                        // 如果飛遠了，或者這是上一回合射出的子彈，就讓它自由脫離
                         tailPos = headPos.clone().sub(forward.clone().multiplyScalar(tracerLen));
                     }
                     
@@ -303,7 +291,6 @@ function renderCombatFrame(currentLog, animProgress) {
                     mesh.geometry.attributes.position.needsUpdate = true;
                     
                     mesh.material.color.setHex(id === 'red' ? 0xff5533 : 0x00e5ff); 
-                    // 根據飛行時間逐漸淡出
                     mesh.material.opacity = Math.max(0, 1.0 - (timeSinceSpawn / 1.5)); 
                     mesh.visible = true;
                     bulletIdx++;
@@ -311,7 +298,6 @@ function renderCombatFrame(currentLog, animProgress) {
             }
         }
         
-        // 飛彈渲染邏輯維持不變
         if (t.pylons) {
             t.pylons.forEach(p => {
                 let mTracks = currentLog[`${id}MslTracks`] ? currentLog[`${id}MslTracks`][p.id] : null; let explodeFrame = currentLog[`${id}ExplodedAt`] ? currentLog[`${id}ExplodedAt`][p.id] : undefined;
@@ -341,3 +327,61 @@ function renderCombatFrame(currentLog, animProgress) {
 
     for (; bulletIdx < visualBullets.length; bulletIdx++) { visualBullets[bulletIdx].visible = false; }
 }
+
+// ============================================================================
+// 💥 [FX 引擎擴充] 擊中火花、致命大爆炸與立體殘骸管理器
+// ============================================================================
+const fxParticles = [];
+const debrisPool = [];
+
+window.spawnHitSpark = function(pos, colorHex) {
+    for (let i = 0; i < 6; i++) {
+        let geo = new THREE.SphereGeometry(0.12, 4, 4);
+        let mat = new THREE.MeshBasicMaterial({ color: colorHex, transparent: true, opacity: 1, blending: THREE.AdditiveBlending });
+        let p = new THREE.Mesh(geo, mat); p.position.copy(pos); scene.add(p);
+        let vel = new THREE.Vector3((Math.random()-0.5)*1.2, (Math.random()-0.5)*1.2, (Math.random()-0.5)*1.2);
+        fxParticles.push({ mesh: p, vel: vel, age: 0, maxAge: 15, scaleSpeed: 0.9 });
+    }
+};
+
+window.spawnMissileExplosion = function(pos) {
+    let geoGlow = new THREE.SphereGeometry(2.5, 16, 16);
+    let matGlow = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 1, blending: THREE.AdditiveBlending });
+    let glow = new THREE.Mesh(geoGlow, matGlow); glow.position.copy(pos); scene.add(glow);
+    fxParticles.push({ mesh: glow, vel: new THREE.Vector3(0,0,0), age: 0, maxAge: 10, scaleSpeed: 1.1 });
+
+    for (let i = 0; i < 20; i++) {
+        let geo = new THREE.SphereGeometry(0.6 + Math.random()*0.6, 8, 8);
+        let mat = new THREE.MeshBasicMaterial({ color: Math.random() > 0.4 ? 0xff4400 : 0xffaa00, transparent: true, opacity: 1, blending: THREE.AdditiveBlending });
+        let p = new THREE.Mesh(geo, mat); p.position.copy(pos); scene.add(p);
+        let vel = new THREE.Vector3((Math.random()-0.5)*2.5, (Math.random()-0.5)*2.5, (Math.random()-0.5)*2.5);
+        fxParticles.push({ mesh: p, vel: vel, age: 0, maxAge: 25 + Math.random()*15, scaleSpeed: 0.96 });
+    }
+};
+
+window.spawnAircraftDebris = function(pos, colorHex) {
+    for (let i = 0; i < 12; i++) {
+        let geo = new THREE.ConeGeometry(0.3 + Math.random()*0.5, 1.0 + Math.random()*1.0, 4);
+        let mat = new THREE.MeshStandardMaterial({ color: colorHex, roughness: 0.6, metalness: 0.5 });
+        let d = new THREE.Mesh(geo, mat); d.position.copy(pos);
+        d.rotation.set(Math.random()*Math.PI, Math.random()*Math.PI, Math.random()*Math.PI);
+        scene.add(d);
+        let vel = new THREE.Vector3((Math.random()-0.5)*3.0, (Math.random()-0.5)*1.5 + 1.0, (Math.random()-0.5)*3.0);
+        let rotVel = new THREE.Vector3((Math.random()-0.5)*0.2, (Math.random()-0.5)*0.2, (Math.random()-0.5)*0.2);
+        debrisPool.push({ mesh: d, vel: vel, rotVel: rotVel, age: 0, maxAge: 120 });
+    }
+};
+
+window.tickFXEngine = function() {
+    for (let i = fxParticles.length - 1; i >= 0; i--) {
+        let p = fxParticles[i]; p.age++; p.mesh.position.add(p.vel); p.mesh.scale.multiplyScalar(p.scaleSpeed);
+        if (p.mesh.material) p.mesh.material.opacity = Math.max(0, 1.0 - (p.age / p.maxAge));
+        if (p.age >= p.maxAge) { scene.remove(p.mesh); if (p.mesh.geometry) p.mesh.geometry.dispose(); fxParticles.splice(i, 1); }
+    }
+    for (let i = debrisPool.length - 1; i >= 0; i--) {
+        let d = debrisPool[i]; d.age++; d.mesh.position.add(d.vel); d.mesh.rotation.x += d.rotVel.x; d.mesh.rotation.y += d.rotVel.y; d.mesh.rotation.z += d.rotVel.z;
+        d.vel.y -= 0.04; d.vel.multiplyScalar(0.98);
+        if (d.mesh.position.y < 0) { d.mesh.position.y = 0; d.vel.set(0,0,0); d.rotVel.set(0,0,0); }
+        if (d.age >= d.maxAge) { scene.remove(d.mesh); if (d.mesh.geometry) d.mesh.geometry.dispose(); debrisPool.splice(i, 1); }
+    }
+};
