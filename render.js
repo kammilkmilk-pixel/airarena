@@ -38,7 +38,7 @@ const flareGeo = new THREE.SphereGeometry(0.4, 8, 8); const expGeo = new THREE.S
 const flareMats = [ new THREE.MeshBasicMaterial({ color: 0xffff00, transparent: true, opacity: 1, blending: THREE.AdditiveBlending, depthWrite: false }), new THREE.MeshBasicMaterial({ color: 0xff8800, transparent: true, opacity: 0.8, blending: THREE.AdditiveBlending, depthWrite: false }), new THREE.MeshBasicMaterial({ color: 0x664422, transparent: true, opacity: 0.5, depthWrite: false }) ];
 const visualFlaresPool = [];
 
-// 🌟 獨立彈池
+// 🌟 獨立彈池：擴大容量以支援連續 3 回合開火 (24 * 3 * 2架飛機 = 足夠了)
 const maxVisualBullets = 150; 
 const visualBullets = [];
 for (let i = 0; i < maxVisualBullets; i++) {
@@ -82,44 +82,101 @@ window.drawStaticFlares = function() {
 };
 
 function updateSpatialHelpers() {
+    if (!teams || typeof P === 'undefined' || !P) return;
+
+    // 🟢 判斷目前是否處於動畫播放或重播模式
+    let isReplaying = window.replayMode || (typeof isAnimating !== 'undefined' && isAnimating);
+
     ['red', 'blue'].forEach(id => {
-        let t = teams[id]; let label = document.getElementById(`alt-label-${id}`);
+        let t = teams[id]; 
+        let label = document.getElementById(`alt-label-${id}`);
+        
         if (!t.realBeam) {
             const beamGeo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0,0,0), new THREE.Vector3(0,-1,0)]);
             t.realBeam = new THREE.Line(beamGeo, new THREE.LineBasicMaterial({color: id==='red'?0xff0055:0x00bcd4, transparent: true, opacity: 0.5})); 
             scene.add(t.realBeam);
         }
+        
+        // 🟢 1. 戰術規劃時隱藏敵機光柱；但在「重播模式」時，強制顯示雙方光柱！
+        if (id !== window.activeTeamId && !isReplaying) {
+            if(t.realBeam) t.realBeam.visible = false; 
+            if(label) label.style.display = 'none';
+            return; 
+        }
+
+        // 🟢 2. 更新光柱與標籤顯示
         if (t.wrapper && !t.isDestroyed) { 
-            let correctedY = t.wrapper.position.y - 0.08; t.realBeam.position.set(t.wrapper.position.x, correctedY, t.wrapper.position.z); t.realBeam.scale.set(1, Math.max(0.01, correctedY), 1); t.realBeam.visible = true; 
-            let pos = t.wrapper.position.clone(); pos.y = pos.y * 0.5; pos.project(camera);
-            if (label) { label.style.left = `${(pos.x*.5+.5)*window.innerWidth}px`; label.style.top = `${(pos.y*-.5+.5)*window.innerHeight}px`; label.style.color = id==='red'?'#ff0055':'#00bcd4'; label.innerText = `${t.wrapper.position.y.toFixed(1)}m`; label.style.display = 'block'; }
-        } else { if(t.realBeam) t.realBeam.visible = false; if(label) label.style.display = 'none'; }
+            let correctedY = t.wrapper.position.y - 0.08; 
+            t.realBeam.position.set(t.wrapper.position.x, correctedY, t.wrapper.position.z); 
+            t.realBeam.scale.set(1, Math.max(0.01, correctedY), 1); 
+            t.realBeam.visible = true; 
+            
+            // 重播時為了畫面乾淨，隱藏原本黏在光柱上的高度數字 (交給浮動標籤處理)
+            if (isReplaying) {
+                if(label) label.style.display = 'none';
+            } else {
+                let pos = t.wrapper.position.clone(); 
+                pos.y = pos.y * 0.8; 
+                pos.project(camera);
+                
+                if (label) { 
+                    label.style.left = `${(pos.x*.5+.5)*window.innerWidth}px`; 
+                    label.style.top = `${(pos.y*-.5+.5)*window.innerHeight}px`; 
+                    label.style.color = id==='red'?'#ff0055':'#00bcd4'; 
+                    label.innerText = `${t.wrapper.position.y.toFixed(1)}m`; 
+                    label.style.display = 'block'; 
+                }
+            }
+        } else { 
+            if(t.realBeam) t.realBeam.visible = false; 
+            if(label) label.style.display = 'none'; 
+        }
     });
     
+    // 🟢 3. 戰術規劃時的「預測殘影」也要同步更新
     let ghostLabel = document.getElementById('alt-label-ghost');
-    if (window.ghostWrapper && window.ghostWrapper.visible && !window.replayMode) { 
-        let correctedGhostY = window.ghostWrapper.position.y - 0.08; ghostBeam.position.set(window.ghostWrapper.position.x, correctedGhostY, window.ghostWrapper.position.z); ghostBeam.scale.set(1, Math.max(0.01, correctedGhostY), 1); ghostBeam.visible = true; 
-        let pos = window.ghostWrapper.position.clone(); pos.y = pos.y * 0.5; pos.project(camera);
-        if (ghostLabel) { ghostLabel.style.left = `${(pos.x*.5+.5)*window.innerWidth}px`; ghostLabel.style.top = `${(pos.y*-.5+.5)*window.innerHeight}px`; ghostLabel.style.color = tAct==='red'?'#ff0055':'#00bcd4'; ghostLabel.innerText = `${window.ghostWrapper.position.y.toFixed(1)}m`; ghostLabel.style.display = 'block'; }
-    } else { ghostBeam.visible = false; if(ghostLabel) ghostLabel.style.display = 'none'; }
+    if (window.ghostWrapper && window.ghostWrapper.visible && !isReplaying) { 
+        let correctedGhostY = window.ghostWrapper.position.y - 0.08; 
+        ghostBeam.position.set(window.ghostWrapper.position.x, correctedGhostY, window.ghostWrapper.position.z); 
+        ghostBeam.scale.set(1, Math.max(0.01, correctedGhostY), 1); 
+        ghostBeam.visible = true; 
+        
+        let pos = window.ghostWrapper.position.clone(); 
+        pos.y = pos.y * 0.8; 
+        pos.project(camera);
+        
+        if (ghostLabel) { 
+            ghostLabel.style.left = `${(pos.x*.5+.5)*window.innerWidth}px`; 
+            ghostLabel.style.top = `${(pos.y*-.5+.5)*window.innerHeight}px`; 
+            ghostLabel.style.color = window.activeTeamId === 'red' ? '#ff0055' : '#00bcd4'; 
+            ghostLabel.innerText = `${window.ghostWrapper.position.y.toFixed(1)}m`; 
+            ghostLabel.style.display = 'block'; 
+        }
+    } else { 
+        ghostBeam.visible = false; 
+        if(ghostLabel) ghostLabel.style.display = 'none'; 
+    }
 }
 
 function drawTrajectoryLine(teamObj) {
     if (trajectoryMeshes[teamObj.id]) { scene.remove(trajectoryMeshes[teamObj.id]); trajectoryMeshes[teamObj.id] = null; }
     if (teamObj.pathPoints.length < 2) { window.ghostWrapper.visible = false; return; }
-    teamObj.flightCurve = new THREE.CatmullRomCurve3(teamObj.pathPoints, false, 'catmullrom', 0); 
+    let pathLen = 0; 
+    for(let i=0; i<teamObj.pathPoints.length-1; i++) pathLen += teamObj.pathPoints[i].distanceTo(teamObj.pathPoints[i+1]);
+    teamObj.flightLength = pathLen;
     const vis = CONFIG.aircrafts['mig21'].visuals; const vertexArray = []; const leftPts = []; const rightPts = []; const steps = teamObj.pathPoints.length * 2;
-    for (let i = 0; i <= steps; i++) { let t = i / steps; let pos = teamObj.flightCurve.getPointAt(t); let q = getQuatAt(t, teamObj.pathQuats); let wingDir = new THREE.Vector3(1, 0, 0).applyQuaternion(q).normalize(); let centerPos = pos.clone().add(new THREE.Vector3(0, vis.engineOffsetY, vis.tailOffsetZ).applyQuaternion(q)); leftPts.push(centerPos.clone().add(wingDir.clone().multiplyScalar(vis.ribbonWidth / 2))); rightPts.push(centerPos.clone().sub(wingDir.clone().multiplyScalar(vis.ribbonWidth / 2))); }
+    for (let i = 0; i <= steps; i++) { let t = i / steps; let pos = getPosAt(t, teamObj.pathPoints); let q = getQuatAt(t, teamObj.pathQuats); let wingDir = new THREE.Vector3(1, 0, 0).applyQuaternion(q).normalize(); let centerPos = pos.clone().add(new THREE.Vector3(0, vis.engineOffsetY, vis.tailOffsetZ).applyQuaternion(q)); leftPts.push(centerPos.clone().add(wingDir.clone().multiplyScalar(vis.ribbonWidth / 2))); rightPts.push(centerPos.clone().sub(wingDir.clone().multiplyScalar(vis.ribbonWidth / 2))); }
     for (let i = 0; i < steps; i++) { vertexArray.push(leftPts[i].x, leftPts[i].y, leftPts[i].z, rightPts[i].x, rightPts[i].y, rightPts[i].z, leftPts[i+1].x, leftPts[i+1].y, leftPts[i+1].z); vertexArray.push(rightPts[i].x, rightPts[i].y, rightPts[i].z, rightPts[i+1].x, rightPts[i+1].y, rightPts[i+1].z, leftPts[i+1].x, leftPts[i+1].y, leftPts[i+1].z); }
     const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.Float32BufferAttribute(vertexArray, 3)); geo.computeVertexNormals();
     trajectoryMeshes[teamObj.id] = new THREE.Mesh(geo, teamObj.id === 'red' ? trackMaterialRed : trackMaterialBlue); scene.add(trajectoryMeshes[teamObj.id]);
     
     if (!isAnimating && !window.replayMode) {
         window.ghostWrapper.visible = true; window.ghostWrapper.position.copy(teamObj.pathPoints[teamObj.pathPoints.length - 1]); window.ghostWrapper.quaternion.copy(teamObj.pathQuats[teamObj.pathQuats.length - 1]);
-        window.ghostCtx.clearRect(0,0,128,64); window.ghostCtx.shadowColor = 'rgba(0,0,0,0.9)'; window.ghostCtx.shadowOffsetX = 2; window.ghostCtx.shadowOffsetY = 2; window.ghostCtx.shadowBlur = 4; window.ghostCtx.fillStyle = '#ffeb3b'; window.ghostCtx.font = 'bold 30px Courier New'; window.ghostCtx.textAlign = 'center'; window.ghostCtx.textBaseline = 'middle'; window.ghostCtx.fillText(teamObj.flightCurve.getLength().toFixed(1) + 'm', 64, 32); window.ghostTex.needsUpdate = true;
+        window.ghostCtx.clearRect(0,0,128,64); window.ghostCtx.shadowColor = 'rgba(0,0,0,0.9)'; window.ghostCtx.shadowOffsetX = 2; window.ghostCtx.shadowOffsetY = 2; window.ghostCtx.shadowBlur = 4; window.ghostCtx.fillStyle = '#ffeb3b'; window.ghostCtx.font = 'bold 30px Courier New'; window.ghostCtx.textAlign = 'center'; window.ghostCtx.textBaseline = 'middle'; window.ghostCtx.fillText(teamObj.flightLength.toFixed(1) + 'm', 64, 32); window.ghostTex.needsUpdate = true;
     } else { window.ghostWrapper.visible = false; }
 }
 
+// 🌟 修正版：移除強行繞回機身起點的閉合邏輯，還原成純淨自然的彈道拋物線
 function updateGunPreview(teamObj) {
     if (!teamObj.wrapper) return;
     if (!teamObj.userData) teamObj.userData = {};
@@ -135,14 +192,14 @@ function updateGunPreview(teamObj) {
         let stats = CONFIG.aircrafts[teamObj.type || 'mig21'].throttleStats[teamObj.throttle] || { gunRangeMult: 1.0 };
         let dRange = GUN_RANGE * stats.gunRangeMult; 
         let posArr = teamObj.userData.gunPreview.geometry.attributes.position.array;
-        let curve = new THREE.CatmullRomCurve3(teamObj.pathPoints, false, 'catmullrom', 0);
-        
+                
         let ptIdx = 0;
         let T_now = 1.0; 
 
+        // 僅描繪這回合在天空中留下的真實子彈流彈道，不再連回過去的飛機
         for (let i = 0; i <= 30; i++) {
             let t_spawn = (i / 30) * 0.95; 
-            let sPos = curve.getPointAt(t_spawn); 
+            let sPos = getPosAt(t_spawn, teamObj.pathPoints); 
             let sQuat = getQuatAt(t_spawn, teamObj.pathQuats);
             let nPos = sPos.clone().add(new THREE.Vector3(0, -0.2, 4.0).applyQuaternion(sQuat));
             let fwd = new THREE.Vector3(0, 0, 1).applyQuaternion(sQuat);
@@ -150,7 +207,7 @@ function updateGunPreview(teamObj) {
             let dt = Math.max(0, T_now - t_spawn); 
             let travelDist = dt * dRange * 2.0; 
             let pt = nPos.clone().add(fwd.multiplyScalar(travelDist));
-            pt.y -= 0.5 * 9.8 * (dt * 2) * (dt * 2) * 0.5; 
+            pt.y -= 0.5 * 9.8 * (dt * 2) * (dt * 2) * 0.5; // 考慮引力下墜
             
             posArr[ptIdx*3] = pt.x; posArr[ptIdx*3+1] = pt.y; posArr[ptIdx*3+2] = pt.z; 
             ptIdx++;
@@ -196,8 +253,10 @@ function updateMissilePreview(teamObj) {
         if (mPoints.length >= 2) {
             let isTracking = mPoints.length < 100 || (mPoints.length > 10 && mPoints[mPoints.length-1].distanceTo(enemyObj.wrapper.position) < 10);
             let lineColor = isTracking ? teamObj.colorMain : 0xffffff; let lineOpacity = isTracking ? 0.8 : 0.4;
-            const curve = new THREE.CatmullRomCurve3(mPoints, false, 'catmullrom', 0); const tubeGeo = new THREE.TubeGeometry(curve, mPoints.length * 2, 0.08, 5, false);
-            p.lineMesh = new THREE.Mesh(tubeGeo, new THREE.MeshBasicMaterial({ color: lineColor, transparent: true, opacity: lineOpacity })); scene.add(p.lineMesh); 
+            const geo = new THREE.BufferGeometry().setFromPoints(mPoints);
+            p.lineMesh = new THREE.Line(geo, new THREE.LineBasicMaterial({ color: lineColor, transparent: true, opacity: lineOpacity, linewidth: 2 }));
+            
+            scene.add(p.lineMesh); 
         }
     });
 }
@@ -205,6 +264,7 @@ function updateMissilePreview(teamObj) {
 function renderCombatFrame(currentLog, animProgress) {
     if (!currentLog || !battleLog) return;
     
+    // 取得當前影格的回合索引 (純函數式狀態推演，支援完美重播倒帶！)
     let turnIdx = battleLog.indexOf(currentLog);
     if (turnIdx === -1) return;
 
@@ -228,8 +288,7 @@ function renderCombatFrame(currentLog, animProgress) {
         
         let currentPlanePos, currentPlaneQuat;
         if (currentLog[id].pts.length >= 2) {
-            let logCurve = new THREE.CatmullRomCurve3(currentLog[id].pts, false, 'catmullrom', 0);
-            currentPlanePos = logCurve.getPointAt(animProgress); 
+            currentPlanePos = getPosAt(animProgress, currentLog[id].pts); 
             currentPlaneQuat = getQuatAt(animProgress, currentLog[id].quats);
             t.wrapper.position.copy(currentPlanePos);
             t.wrapper.quaternion.copy(currentPlaneQuat);
@@ -238,8 +297,10 @@ function renderCombatFrame(currentLog, animProgress) {
 
         if (t.userData && t.userData.gunPreview) t.userData.gunPreview.visible = false;
         
+        // 取得當前機鼻座標 (作為槍口錨點)
         let currentNosePos = currentPlanePos.clone().add(new THREE.Vector3(0, -0.2, 4.0).applyQuaternion(currentPlaneQuat));
 
+        // 🌟 無狀態時空回溯：往前翻找包含自己在內的「過去 3 個回合」的開火紀錄
         for (let age = 0; age <= 2; age++) {
             let logIdx = turnIdx - age;
             if (logIdx < 0) continue;
@@ -251,18 +312,22 @@ function renderCombatFrame(currentLog, animProgress) {
             if (logChain && logChain.length > 0 && logChain[0].fire === 'gun' && pastLog[id].pts.length >= 2) {
                 let stats = CONFIG.aircrafts[t.type || 'mig21'].throttleStats[logChain[0].throttle || 2] || { gunRangeMult: 1.0 };
                 let dRange = GUN_RANGE * stats.gunRangeMult;
-                let pastCurve = new THREE.CatmullRomCurve3(pastLog[id].pts, false, 'catmullrom', 0);
+                
 
+                // 繪製這回合產生的 24 發子彈
                 for (let b = 0; b < 24; b++) {
                     if (bulletIdx >= visualBullets.length) break;
                     let mesh = visualBullets[bulletIdx]; 
                     let t_spawn = (b / 23) * 0.95; 
 
+                    // 計算這顆子彈從發射到現在，總共飛了多少「回合時間」
                     let timeSinceSpawn = animProgress - t_spawn + age;
                     
+                    // 如果時間為負 (還沒發射)，或是飛太久 (超過 1.5 個回合)，就不畫它
                     if (timeSinceSpawn < 0 || timeSinceSpawn > 1.5) continue;
 
-                    let spawnPos = pastCurve.getPointAt(t_spawn); 
+                    // 找出發射瞬間的姿態與位置
+                    let spawnPos = getPosAt(t_spawn, pastLog[id].pts);
                     let spawnQuat = getQuatAt(t_spawn, pastLog[id].quats);
                     let noseOffset = new THREE.Vector3(0, -0.2, 4.0).applyQuaternion(spawnQuat); 
                     let startPos = spawnPos.clone().add(noseOffset);
@@ -272,17 +337,20 @@ function renderCombatFrame(currentLog, animProgress) {
                     let right = new THREE.Vector3(1, 0, 0).applyQuaternion(spawnQuat); let up = new THREE.Vector3(0, 1, 0).applyQuaternion(spawnQuat);
                     forward.add(right.multiplyScalar(spreadX)).add(up.multiplyScalar(spreadY)).normalize();
                     
+                    // 根據總飛行時間計算彈頭位置
                     let travelDist = timeSinceSpawn * dRange * 2.0; 
                     let headPos = startPos.clone().add(forward.clone().multiplyScalar(travelDist));
                     let gravDrop = 0.5 * 9.8 * (timeSinceSpawn * 2) * (timeSinceSpawn * 2) * 0.5; 
                     headPos.y -= gravDrop;
 
-                    let tracerLen = 4;
+                    let tracerLen = 4; // 曳光彈長度
                     let tailPos;
 
+                    // 🌟 核心視覺欺騙：如果是這回合剛發射的子彈，且還沒完全脫離槍口，把尾巴死死黏在當前機鼻上！
                     if (age === 0 && travelDist < tracerLen) {
                         tailPos = currentNosePos.clone();
                     } else {
+                        // 如果飛遠了，或者這是上一回合射出的子彈，就讓它自由脫離
                         tailPos = headPos.clone().sub(forward.clone().multiplyScalar(tracerLen));
                     }
                     
@@ -291,6 +359,7 @@ function renderCombatFrame(currentLog, animProgress) {
                     mesh.geometry.attributes.position.needsUpdate = true;
                     
                     mesh.material.color.setHex(id === 'red' ? 0xff5533 : 0x00e5ff); 
+                    // 根據飛行時間逐漸淡出
                     mesh.material.opacity = Math.max(0, 1.0 - (timeSinceSpawn / 1.5)); 
                     mesh.visible = true;
                     bulletIdx++;
@@ -298,6 +367,7 @@ function renderCombatFrame(currentLog, animProgress) {
             }
         }
         
+        // 飛彈渲染邏輯維持不變
         if (t.pylons) {
             t.pylons.forEach(p => {
                 let mTracks = currentLog[`${id}MslTracks`] ? currentLog[`${id}MslTracks`][p.id] : null; let explodeFrame = currentLog[`${id}ExplodedAt`] ? currentLog[`${id}ExplodedAt`][p.id] : undefined;
@@ -327,61 +397,3 @@ function renderCombatFrame(currentLog, animProgress) {
 
     for (; bulletIdx < visualBullets.length; bulletIdx++) { visualBullets[bulletIdx].visible = false; }
 }
-
-// ============================================================================
-// 💥 [FX 引擎擴充] 擊中火花、致命大爆炸與立體殘骸管理器
-// ============================================================================
-const fxParticles = [];
-const debrisPool = [];
-
-window.spawnHitSpark = function(pos, colorHex) {
-    for (let i = 0; i < 6; i++) {
-        let geo = new THREE.SphereGeometry(0.12, 4, 4);
-        let mat = new THREE.MeshBasicMaterial({ color: colorHex, transparent: true, opacity: 1, blending: THREE.AdditiveBlending });
-        let p = new THREE.Mesh(geo, mat); p.position.copy(pos); scene.add(p);
-        let vel = new THREE.Vector3((Math.random()-0.5)*1.2, (Math.random()-0.5)*1.2, (Math.random()-0.5)*1.2);
-        fxParticles.push({ mesh: p, vel: vel, age: 0, maxAge: 15, scaleSpeed: 0.9 });
-    }
-};
-
-window.spawnMissileExplosion = function(pos) {
-    let geoGlow = new THREE.SphereGeometry(2.5, 16, 16);
-    let matGlow = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 1, blending: THREE.AdditiveBlending });
-    let glow = new THREE.Mesh(geoGlow, matGlow); glow.position.copy(pos); scene.add(glow);
-    fxParticles.push({ mesh: glow, vel: new THREE.Vector3(0,0,0), age: 0, maxAge: 10, scaleSpeed: 1.1 });
-
-    for (let i = 0; i < 20; i++) {
-        let geo = new THREE.SphereGeometry(0.6 + Math.random()*0.6, 8, 8);
-        let mat = new THREE.MeshBasicMaterial({ color: Math.random() > 0.4 ? 0xff4400 : 0xffaa00, transparent: true, opacity: 1, blending: THREE.AdditiveBlending });
-        let p = new THREE.Mesh(geo, mat); p.position.copy(pos); scene.add(p);
-        let vel = new THREE.Vector3((Math.random()-0.5)*2.5, (Math.random()-0.5)*2.5, (Math.random()-0.5)*2.5);
-        fxParticles.push({ mesh: p, vel: vel, age: 0, maxAge: 25 + Math.random()*15, scaleSpeed: 0.96 });
-    }
-};
-
-window.spawnAircraftDebris = function(pos, colorHex) {
-    for (let i = 0; i < 12; i++) {
-        let geo = new THREE.ConeGeometry(0.3 + Math.random()*0.5, 1.0 + Math.random()*1.0, 4);
-        let mat = new THREE.MeshStandardMaterial({ color: colorHex, roughness: 0.6, metalness: 0.5 });
-        let d = new THREE.Mesh(geo, mat); d.position.copy(pos);
-        d.rotation.set(Math.random()*Math.PI, Math.random()*Math.PI, Math.random()*Math.PI);
-        scene.add(d);
-        let vel = new THREE.Vector3((Math.random()-0.5)*3.0, (Math.random()-0.5)*1.5 + 1.0, (Math.random()-0.5)*3.0);
-        let rotVel = new THREE.Vector3((Math.random()-0.5)*0.2, (Math.random()-0.5)*0.2, (Math.random()-0.5)*0.2);
-        debrisPool.push({ mesh: d, vel: vel, rotVel: rotVel, age: 0, maxAge: 120 });
-    }
-};
-
-window.tickFXEngine = function() {
-    for (let i = fxParticles.length - 1; i >= 0; i--) {
-        let p = fxParticles[i]; p.age++; p.mesh.position.add(p.vel); p.mesh.scale.multiplyScalar(p.scaleSpeed);
-        if (p.mesh.material) p.mesh.material.opacity = Math.max(0, 1.0 - (p.age / p.maxAge));
-        if (p.age >= p.maxAge) { scene.remove(p.mesh); if (p.mesh.geometry) p.mesh.geometry.dispose(); fxParticles.splice(i, 1); }
-    }
-    for (let i = debrisPool.length - 1; i >= 0; i--) {
-        let d = debrisPool[i]; d.age++; d.mesh.position.add(d.vel); d.mesh.rotation.x += d.rotVel.x; d.mesh.rotation.y += d.rotVel.y; d.mesh.rotation.z += d.rotVel.z;
-        d.vel.y -= 0.04; d.vel.multiplyScalar(0.98);
-        if (d.mesh.position.y < 0) { d.mesh.position.y = 0; d.vel.set(0,0,0); d.rotVel.set(0,0,0); }
-        if (d.age >= d.maxAge) { scene.remove(d.mesh); if (d.mesh.geometry) d.mesh.geometry.dispose(); debrisPool.splice(i, 1); }
-    }
-};

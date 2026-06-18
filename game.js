@@ -1,5 +1,5 @@
 // ============================================================================
-// game.js - UI 橋樑、模型載入、主迴圈與 ACMI 重播系統 (重力拋物線補償版)
+// game.js - UI 橋樑、模型載入、主迴圈與 ACMI 重播系統 (初始變數修復版)
 // ============================================================================
 
 const loader = new THREE.GLTFLoader();
@@ -10,8 +10,8 @@ function setupModel(gltf, x, z, yRot) {
     return wrapper;
 }
 
-loader.load('mig21_red.glb', g => { teams.red.wrapper = setupModel(g, 10, -10, 0); checkInit(); });
-loader.load('mig21_blue.glb', g => { teams.blue.wrapper = setupModel(g, 10, 50, Math.PI); checkInit(); });
+loader.load('mig21_red.glb', g => { teams.red.wrapper = setupModel(g, 10, -30, 0); checkInit(); });
+loader.load('mig21_blue.glb', g => { teams.blue.wrapper = setupModel(g, 10, 70, Math.PI); checkInit(); });
 loader.load('fox_two.glb', g => {
     const m = g.scene; m.traverse(c => { if(c.isMesh) c.material = new THREE.MeshBasicMaterial({ color: 0xdddddd }); });
     const b = new THREE.Box3().setFromObject(m); const s = 1.0 / Math.max(b.getSize(new THREE.Vector3()).x, b.getSize(new THREE.Vector3()).y, b.getSize(new THREE.Vector3()).z); 
@@ -56,9 +56,10 @@ function checkInit() {
             ['red', 'blue'].forEach(id => {
                 let t = teams[id]; 
                 
-                t.ap = 50;   
-                t.heat = 0;  
-                t.hp = 100;  
+                // 🌟 核心修復：賦予開局初始數值，讓指針有數字可以計算！
+                t.ap = 50;   // 開局給予 50 AP
+                t.heat = 0;  // 開局引擎冷卻 0°C
+                t.hp = 100;  // 滿血
                 
                 t.chain = [{yaw:0, pitch:0, roll:0, throttle:t.throttle, fire:'none'}];
                 let res = simulateFlight(t, t.chain); t.pathPoints = res.points; t.pathQuats = res.quats;
@@ -129,30 +130,32 @@ function updateHUD() {
         while(threatEnvGroup.children.length > 0){ let child = threatEnvGroup.children[0]; if(child.geometry) child.geometry.dispose(); threatEnvGroup.remove(child); }
         threatEnvGroup.position.set(0, 0, 0); threatEnvGroup.quaternion.identity();
         
-        const matT1 = new THREE.LineBasicMaterial({ color: 0xff0055, transparent: true, opacity: 0.8, blending: THREE.AdditiveBlending }); 
-        const matT2 = new THREE.LineBasicMaterial({ color: 0xff8800, transparent: true, opacity: 0.3, blending: THREE.AdditiveBlending }); 
-        const matT3 = new THREE.LineBasicMaterial({ color: 0xaa4400, transparent: true, opacity: 0.15, blending: THREE.AdditiveBlending });
+        const matT1 = new THREE.LineBasicMaterial({ color: 0x00ff88, transparent: true, opacity: 0.8, blending: THREE.AdditiveBlending }); 
+        const matT2 = new THREE.LineBasicMaterial({ color: 0x00aa55, transparent: true, opacity: 0.3, blending: THREE.AdditiveBlending }); 
+        const matT3 = new THREE.LineBasicMaterial({ color: 0x006633, transparent: true, opacity: 0.15, blending: THREE.AdditiveBlending });
         
         function createEnvelopeNet(testThrottle, lineMat) { const segments = 16; const pathSets = []; for (let i = 0; i < segments; i++) { let angle = (i / segments) * Math.PI * 2; let tYaw = -Math.cos(angle) * (Math.PI / 4); let tPitch = Math.sin(angle) * (Math.PI / 3); let r = simulateFlight(enemyObj, [{yaw: tYaw, pitch: tPitch, roll: 0, throttle: testThrottle}]); pathSets.push(r.points); } for (let i = 0; i < segments; i += 2) { threatEnvGroup.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pathSets[i]), lineMat)); } [15, 30].forEach(frame => { let ringPts = []; for (let i = 0; i < segments; i++) ringPts.push(pathSets[i][frame]); ringPts.push(pathSets[0][frame]); threatEnvGroup.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(ringPts), lineMat)); }); }
         createEnvelopeNet(1, matT1); createEnvelopeNet(2, matT2); createEnvelopeNet(3, matT3); 
         let centerRes = simulateFlight(enemyObj, [{yaw: 0, pitch: 0, roll: 0, throttle: enemyObj.throttle}]);
-        let centerLine = new THREE.Line(new THREE.BufferGeometry().setFromPoints(centerRes.points), new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.9 })); threatEnvGroup.add(centerLine); threatEnvGroup.visible = true; 
-    } else { if(threatEnvGroup) threatEnvGroup.visible = false; }
+        let centerLine = new THREE.Line(new THREE.BufferGeometry().setFromPoints(centerRes.points), new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.9 })); 
+        threatEnvGroup.add(centerLine); 
+        threatEnvGroup.visible = typeof isEnvelopeVisible !== 'undefined' ? isEnvelopeVisible : true;
+    }
 
     if (typeof updateTargetingLock === 'function') updateTargetingLock(P); 
     if (typeof updateMissilePreview === 'function') updateMissilePreview(P); 
     if (typeof updateGunPreview === 'function') updateGunPreview(P); 
     if (typeof updateDashboardUI === 'function') updateDashboardUI(P);
+    if (typeof updateDynamicHUD === 'function') updateDynamicHUD(P); 
 }
 
-// 🌟 核心升級：機砲火控大腦加入重力下墜的「虛擬抬高判定」
 function updateTargetingLock(teamObj) {
     const enemyObj = teamObj.id === 'red' ? teams.blue : teams.red; const btnFireWpn = document.getElementById('btn-fire-wpn');
     if(!btnFireWpn || !teamObj.wrapper || !enemyObj.wrapper || enemyObj.isDestroyed) return;
     
     if (teamObj.flaresArmed) { if(!teamObj.wpnQueued) { btnFireWpn.innerText = `🔆 放棄開火 (拋灑誘餌)`; btnFireWpn.style.borderColor = '#ff9800'; btnFireWpn.style.color = '#ff9800'; } return; }
     
-    const distance = teamObj.wrapper.position.distanceTo(enemyObj.wrapper.position); 
+    const distance = teamObj.wrapper.position.distanceTo(enemyObj.wrapper.position); const forward = new THREE.Vector3(0, 0, 1).applyQuaternion(teamObj.wrapper.quaternion).normalize(); const angle = forward.angleTo(new THREE.Vector3().subVectors(enemyObj.wrapper.position, teamObj.wrapper.position).normalize());
     const exposedHeat = calculateExposedHeat(100 + enemyObj.heat, enemyObj.wrapper.position, enemyObj.wrapper.quaternion, teamObj.wrapper.position);
 
     let isLocked = false; let statusText = "";
@@ -161,116 +164,156 @@ function updateTargetingLock(teamObj) {
         let dRange = GUN_RANGE * stats.gunRangeMult;
         let dAngle = GUN_ANGLE * stats.gunAngleMult;
         
-        // ✨ 計算子彈飛行時間，並把敵機「虛擬抬高」來抵銷重力！
-        let t_flight = distance / (dRange * 2.0);
-        let virtualEnemyPos = enemyObj.wrapper.position.clone();
-        virtualEnemyPos.y += (9.8 * t_flight * t_flight); 
+        // 替換為與 combat.js 一致的牛角拋物線邏輯
+        let vecToEnemy = new THREE.Vector3().subVectors(enemyObj.wrapper.position, teamObj.wrapper.position);
+        let forwardDist = vecToEnemy.dot(forward);
         
-        // 使用抬高後的座標來計算角度
-        const forward = new THREE.Vector3(0, 0, 1).applyQuaternion(teamObj.wrapper.quaternion).normalize(); 
-        const angle = forward.angleTo(new THREE.Vector3().subVectors(virtualEnemyPos, teamObj.wrapper.position).normalize());
+        if (forwardDist > 0 && forwardDist <= dRange) {
+            let timeSinceSpawn = forwardDist / (dRange * 2.0);
+            let gravDrop = 0.5 * 9.8 * (timeSinceSpawn * 2) * (timeSinceSpawn * 2) * 0.5;
+            let expectedBulletPos = teamObj.wrapper.position.clone().add(forward.clone().multiplyScalar(forwardDist));
+            expectedBulletPos.y -= gravDrop;
+            
+            let coneRadius = forwardDist * Math.tan(dAngle);
+            isLocked = (expectedBulletPos.distanceTo(enemyObj.wrapper.position) <= coneRadius);
+        }
         
-        isLocked = (distance <= dRange && angle <= dAngle); 
         statusText = isLocked ? `[LOCKED] 機砲` : `[OUT] 機砲`;
-    } else {
-        const forward = new THREE.Vector3(0, 0, 1).applyQuaternion(teamObj.wrapper.quaternion).normalize(); 
-        const angle = forward.angleTo(new THREE.Vector3().subVectors(enemyObj.wrapper.position, teamObj.wrapper.position).normalize());
-        isLocked = (distance <= SEEKER_RANGE && angle <= SEEKER_ANGLE && exposedHeat >= SEEKER_MIN_HEAT); 
-        statusText = isLocked ? `[LOCKED] FOX-2` : `[NO HEAT] FOX-2`;
-    }
-
-    if (!teamObj.wpnQueued) { btnFireWpn.innerText = `🎯 排程 ${statusText}`; if (isLocked) { btnFireWpn.style.borderColor = '#00ff88'; btnFireWpn.style.color = '#00ff88'; } else { btnFireWpn.style.borderColor = '#555'; btnFireWpn.style.color = '#888'; }
     } else { btnFireWpn.innerText = `⛔ 取消排程 [${teamObj.weapon === 'gun' ? '機砲' : 'FOX-2'}]`; btnFireWpn.style.borderColor = '#ff0055'; btnFireWpn.style.color = '#fff'; }
 }
 
+// ==========================================
+// 🌟 新增：戰鬥動畫啟動入口 (安全鎖)
+// ==========================================
+window.startCombatAnimation = function() {
+    window.replayMode = false;     // 強制關閉重播模式
+    isReplayingAuto = false;       // 強制停止重播自動播放
+    animProgress = 0.0;            // 動畫進度歸零
+    isAnimating = true;            // 開啟主要動畫引擎
+
+    // 關閉所有干擾畫面的 UI 元素
+    let btnExit = document.getElementById('btn-rep-exit');
+    if (btnExit) btnExit.style.display = 'none';
+    
+    let tagR = document.getElementById('replay-tag-red');
+    let tagB = document.getElementById('replay-tag-blue');
+    if (tagR) tagR.style.display = 'none';
+    if (tagB) tagB.style.display = 'none';
+
+    ['red', 'blue'].forEach(id => {
+        if (trajectoryMeshes[id]) trajectoryMeshes[id].visible = false;
+        if (teams[id].userData && teams[id].userData.gunPreview) teams[id].userData.gunPreview.visible = false;
+        if (teams[id].pylons) teams[id].pylons.forEach(p => { if (p.lineMesh) p.lineMesh.visible = false; });
+    });
+    if (window.ghostWrapper) window.ghostWrapper.visible = false;
+    if (threatEnvGroup) threatEnvGroup.visible = false;
+};
+
 function animate() {
     requestAnimationFrame(animate); 
-    
     if (typeof controls === 'undefined' || !controls || typeof renderer === 'undefined' || !renderer) return;
 
     controls.update(); 
+    camera.updateMatrixWorld(); // 🟢 關鍵修復 1：消除攝影機與標籤之間的延遲誤差
+
     if (typeof updateSpatialHelpers === 'function') updateSpatialHelpers();
     
-    if (typeof window.tickFXEngine === 'function') window.tickFXEngine();
-    
-    if (window.replayMode) { renderer.render(scene, camera); return; }
+    if (typeof updateDynamicHUD === 'function') {
+        updateDynamicHUD(P); 
+    }
 
+    // ==========================================
+    // 1. ACMI 重播模式 (純記憶體驅動，斬斷 DOM 讀取延遲)
+    // ==========================================
+    if (window.replayMode) { 
+        
+        // 步驟 A：時間軸推進 (這裡只在播放時才執行)
+        if (isReplayingAuto) {
+            let now = performance.now();
+            let dt = now - (window.lastReplayTime || now);
+            window.lastReplayTime = now;
+            
+            if (window.virtualReplayTime === undefined) window.virtualReplayTime = 1.0;
+            let maxTime = battleLog.length + 0.99;
+            
+            window.virtualReplayTime += (dt / 1500); 
+
+            if (window.virtualReplayTime >= maxTime) {
+                window.virtualReplayTime = maxTime;
+                isReplayingAuto = false;
+                let btnPlay = document.getElementById('btn-rep-play');
+                if (btnPlay) btnPlay.innerText = "▶ 播放"; 
+            }
+            
+            let sld = document.getElementById('replay-slider');
+            if (sld) sld.value = window.virtualReplayTime;
+        }
+
+        // 步驟 B：畫面與標籤渲染 (🟢 關鍵修復 2：移到外面，保證暫停或結束時，每一幀都在刷新！)
+        try {
+            let val = window.virtualReplayTime || 1.0;
+            let maxTime = battleLog.length + 0.99;
+            let turnIdx = Math.max(0, Math.min(battleLog.length - 1, Math.floor(val) - 1)); 
+            let progress = val - Math.floor(val);
+            if (progress >= 0.99 || val >= maxTime) { 
+                progress = 1.0; 
+                turnIdx = Math.max(0, Math.min(battleLog.length - 1, Math.floor(val - 0.01) - 1)); 
+            }
+            
+            if (battleLog[turnIdx]) {
+                if (typeof renderCombatFrame === 'function') renderCombatFrame(battleLog[turnIdx], progress);
+                // 👇 這行現在不受暫停影響了！
+                if (typeof updateReplayTags === 'function') updateReplayTags(battleLog[turnIdx], progress);
+            }
+        } catch (e) { 
+            console.error("重播渲染遭遇亂流，已由裝甲攔截:", e); 
+        }
+
+        renderer.render(scene, camera); 
+        return; 
+    }
+
+    // ==========================================
+    // 2. 正常戰鬥播放模式 (維持原樣)
+    // ==========================================
     if (isAnimating && teams.red.flightCurve && teams.blue.flightCurve) {
         try {
             animProgress += 0.012; if (animProgress > 1.0) animProgress = 1.0; 
-            let currentLog = battleLog[battleLog.length - 1]; 
+            let currentLog = battleLog.length > 0 ? battleLog[battleLog.length - 1] : null; 
+            if (currentLog && typeof renderCombatFrame === 'function') renderCombatFrame(currentLog, animProgress);
+            if (typeof updateReplayTags === 'function') updateReplayTags(currentLog, animProgress);
             
-            if (typeof renderCombatFrame === 'function') renderCombatFrame(currentLog, animProgress);
-
             let trackIdx = Math.min(100, Math.floor(animProgress * 100));
             ['red', 'blue'].forEach(id => {
-                let t = teams[id]; let enemy = id === 'red' ? teams.blue : teams.red;
+                let t = teams[id]; 
                 if(t.isDestroyed || !t.flightCurve) return; 
-
-                let logChain = currentLog[id].chain; 
-                let stepSection = Math.floor(animProgress * logChain.length); if (stepSection >= logChain.length) stepSection = logChain.length - 1;
-                
-                // 🌟 核心升級：實際命中結算也加入拋物線物理同步！
-                if (logChain[stepSection] && logChain[stepSection].fire === 'gun' && !enemy.isDestroyed) {
-                    let cmdThrottle = logChain[stepSection].throttle || 2; 
-                    let stats = CONFIG.aircrafts['mig21'].throttleStats[cmdThrottle] || { gunAngleMult: 1.0, gunRangeMult: 1.0 };
-                    let dynamicGunRange = GUN_RANGE * stats.gunRangeMult; let dynamicGunAngle = GUN_ANGLE * stats.gunAngleMult;
-                    
-                    let distanceToEnemy = t.wrapper.position.distanceTo(enemy.wrapper.position);
-                    let t_flight = distanceToEnemy / (dynamicGunRange * 2.0);
-                    let virtualEnemyPos = enemy.wrapper.position.clone();
-                    virtualEnemyPos.y += (9.8 * t_flight * t_flight); // 抬高目標判定區
-
-                    let forwardDir = new THREE.Vector3(0, 0, 1).applyQuaternion(t.wrapper.quaternion).normalize(); 
-                    let vectorToEnemy = new THREE.Vector3().subVectors(virtualEnemyPos, t.wrapper.position);
-                    
-                    if (distanceToEnemy <= dynamicGunRange && forwardDir.angleTo(vectorToEnemy.normalize()) <= dynamicGunAngle) {
-                        
-                        let oldHp = enemy.hp;
-                        enemy.hp -= (GUN_DAMAGE * 0.015); if(enemy.hp <= 0) { enemy.hp = 0; enemy.isDestroyed = true; }
-                        
-                        if (typeof window.spawnHitSpark === 'function' && !window.replayMode) {
-                            window.spawnHitSpark(enemy.wrapper.position, id === 'red' ? 0xffaa00 : 0x00ffff);
-                            if (enemy.isDestroyed && oldHp > 0) {
-                                window.spawnAircraftDebris(enemy.wrapper.position, enemy.id === 'red' ? 0xff0055 : 0x00bcd4);
-                                window.spawnMissileExplosion(enemy.wrapper.position);
-                                enemy.wrapper.visible = false;
-                            }
-                        }
-                    }
-                }
-
-                if (t.pylons) {
+                if (t.pylons && currentLog) {
                     t.pylons.forEach(p => {
                         let explodeFrame = currentLog[`${id}ExplodedAt`] ? currentLog[`${id}ExplodedAt`][p.id] : undefined;
                         if (explodeFrame !== undefined && trackIdx >= explodeFrame && !p.hasBoomedThisTurn) {
                             let isSelfDestruct = currentLog[`${id}MslIsSelfDestruct`] ? currentLog[`${id}MslIsSelfDestruct`][p.id] : false;
-                            if (isSelfDestruct) {
-                                if (!window.replayMode) { let banner = document.getElementById('phase-banner'); if (banner) { banner.innerHTML = `<span style="font-size:24px; color:#ff5500; font-weight:bold; text-shadow: 2px 2px 4px #000;">💥 飛彈達最大航程自毀</span>`; banner.style.opacity = '1'; setTimeout(() => banner.style.opacity = '0', 1500); } }
-                            } else {
-                                let oldHp = enemy.hp;
-                                enemy.hp -= MISSILE_DAMAGE; if(enemy.hp <= 0) { enemy.hp = 0; enemy.isDestroyed = true; }
-                                
-                                if (typeof window.spawnMissileExplosion === 'function' && !window.replayMode) {
-                                    window.spawnMissileExplosion(enemy.wrapper.position);
-                                    if (enemy.isDestroyed && oldHp > 0) {
-                                        window.spawnAircraftDebris(enemy.wrapper.position, enemy.id === 'red' ? 0xff0055 : 0x00bcd4);
-                                        enemy.wrapper.visible = false;
-                                    }
-                                }
-                            }
+                            if (isSelfDestruct && !window.replayMode) { let banner = document.getElementById('phase-banner'); if (banner) { banner.innerHTML = `<span style="font-size:24px; color:#ff5500; font-weight:bold; text-shadow: 2px 2px 4px #000;">💥 飛彈達最大航程自毀</span>`; banner.style.opacity = '1'; setTimeout(() => banner.style.opacity = '0', 1500); } } 
                             p.hasBoomedThisTurn = true; 
                         }
                     });
                 }
             });
 
-            if (animProgress >= 1.0 && typeof finishTurnSimultaneously === 'function') finishTurnSimultaneously();
-        } catch (err) { console.error(err); if(typeof finishTurnSimultaneously === 'function') finishTurnSimultaneously(); }
+            if (animProgress >= 1.0 && typeof finishTurnSimultaneously === 'function') {
+                let tagR = document.getElementById('replay-tag-red');
+                let tagB = document.getElementById('replay-tag-blue');
+                if (tagR) tagR.style.display = 'none';
+                if (tagB) tagB.style.display = 'none';
+
+                finishTurnSimultaneously();
+            }
+        } catch (err) { 
+            console.error("戰鬥播放崩潰，已強制跳轉:", err); 
+            if(typeof finishTurnSimultaneously === 'function') finishTurnSimultaneously(); 
+        }
     }
     renderer.render(scene, camera);
 }
-
 // ============================================================================
 // 👇 ACMI 戰術重播系統大腦
 // ============================================================================
@@ -312,6 +355,11 @@ function exitReplayMode() {
     let rs = document.getElementById('replay-status');
     if (rs) { rs.innerText = "狀態: 戰術規劃中"; rs.style.color = "#aaa"; }
     
+    let tagR = document.getElementById('replay-tag-red');
+    let tagB = document.getElementById('replay-tag-blue');
+    if (tagR) tagR.style.display = 'none';
+    if (tagB) tagB.style.display = 'none';
+
     let sld = document.getElementById('replay-slider');
     if (sld) sld.value = sld.max; 
     
@@ -333,34 +381,19 @@ function toggleReplayPlay() {
     let btnPlay = document.getElementById('btn-rep-play');
     
     if (isReplayingAuto) {
+        // 暫停狀態：單純切換旗標，不再呼叫 cancelAnimationFrame
         isReplayingAuto = false;
-        cancelAnimationFrame(replayInterval);
         if (btnPlay) btnPlay.innerText = "▶ 播放";
     } else {
+        // 播放狀態
         enterReplayMode();
         isReplayingAuto = true;
+        
+        // 紀錄當下時間，交由主迴圈 animate 去算 Delta Time
+        window.lastReplayTime = performance.now(); 
+        
         if (btnPlay) btnPlay.innerText = "⏸ 暫停";
-        
         if (parseFloat(sld.value) >= parseFloat(sld.max)) sld.value = sld.min; 
-        
-        let lastTime = performance.now();
-        function playLoop(now) {
-            if (!isReplayingAuto) return;
-            let dt = now - lastTime;
-            lastTime = now;
-            
-            let val = parseFloat(sld.value) + (dt / 1500); 
-            if (val >= parseFloat(sld.max)) {
-                val = parseFloat(sld.max);
-                isReplayingAuto = false;
-                if (btnPlay) btnPlay.innerText = "▶ 播放"; 
-            }
-            sld.value = val;
-            sld.dispatchEvent(new Event('input'));
-            
-            if (isReplayingAuto) replayInterval = requestAnimationFrame(playLoop);
-        }
-        replayInterval = requestAnimationFrame(playLoop);
     }
 }
 
@@ -372,12 +405,14 @@ document.addEventListener("DOMContentLoaded", () => {
             
             if (e.isTrusted && isReplayingAuto) {
                 isReplayingAuto = false;
-                cancelAnimationFrame(replayInterval);
                 let btnPlay = document.getElementById('btn-rep-play');
                 if (btnPlay) btnPlay.innerText = "▶ 播放";
             }
             
             let val = parseFloat(e.target.value); 
+            // 🌟 將玩家手動拖曳的時間同步回虛擬時間軸
+            window.virtualReplayTime = val; 
+
             let turnIdx = Math.floor(val) - 1; 
             let progress = val - Math.floor(val);
             if (progress >= 0.99 || val === parseFloat(sld.max)) { progress = 1.0; turnIdx = Math.floor(val - 0.01) - 1; }
@@ -387,6 +422,7 @@ document.addEventListener("DOMContentLoaded", () => {
             let currentLog = battleLog[turnIdx];
             if (currentLog && typeof renderCombatFrame === 'function') { 
                 renderCombatFrame(currentLog, progress); 
+                if (typeof updateReplayTags === 'function') updateReplayTags(currentLog, progress);
                 renderer.render(scene, camera); 
             }
         });

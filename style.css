@@ -253,3 +253,66 @@ body.theme-blue #joystick-handle { background: #00bcd4; box-shadow: 0 0 12px rgb
     from { opacity: 0.5; }
     to { opacity: 1; }
 }
+
+/* ==========================================================================
+   🎯 HUD 戰術鎖定系統 - 極簡靜態版 (無閃爍、無旋轉、無多餘外框)
+   ========================================================================== */
+
+#dynamic-hud {
+    position: fixed; top: 0; left: 0; pointer-events: auto;
+    cursor: crosshair; z-index: 8000; transform: translate(-50%, -50%); display: none;
+}
+
+/* 基礎容器 (去除固定邊框) */
+#hud-shape { 
+    position: absolute; top: -20px; left: -20px;
+    width: 40px; height: 40px; box-sizing: border-box;
+}
+
+/* 徹底清除所有偽元素 (殺死殘留的菱形或跳動方塊) */
+#hud-shape::before, #hud-shape::after { 
+    content: none !important; display: none !important; 
+}
+
+/* --- 3種絕對獨立的形狀 --- */
+
+/* 1. 射程外：單純方框 */
+.shape-square { 
+    border: 2px solid #00ff88; border-radius: 0; background: none; 
+}
+
+/* 2. 飛彈射程內：單純圓圈 */
+.shape-circle { 
+    border: 2px solid #00ff88; border-radius: 50%; background: none; 
+}
+
+/* 3. 機砲射程內：四條斜線 (無邊框) */
+.shape-gun { 
+    border: none !important; background: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Cpath d='M 6 6 L 15 15 M 34 6 L 25 15 M 6 34 L 15 25 M 34 34 L 25 25' stroke='%2300ff88' stroke-width='2.5' stroke-linecap='round'/%3E%3C/svg%3E");
+    background-size: 100% 100%;
+}
+
+/* --- 必中高亮狀態 (完全靜態) --- */
+.predicted-hit {
+    /* 讓方框/圓圈變成白色 */
+    border-color: #ffffff !important;
+    /* 讓 SVG 線條發出白光 */
+    filter: drop-shadow(0 0 6px #ffffff);
+}
+
+/* 數據標籤與重播標籤維持原樣 */
+#hud-data-tag {
+    position: absolute; left: 30px; top: -20px; color: #00ff88;
+    font-size: 11px; font-family: 'Courier New', monospace; font-weight: bold;
+    white-space: nowrap; text-shadow: 1px 1px 2px #000; pointer-events: none;
+}
+.replay-floating-tag {
+    position: fixed; top: 0; left: 0; color: #fff;
+    font-size: 11px; font-weight: bold; font-family: 'Courier New', monospace;
+    background: rgba(10, 10, 10, 0.85); border: 1px solid #444; padding: 3px 8px;
+    border-radius: 4px; pointer-events: none; z-index: 8500; display: none;
+    text-shadow: 1px 1px 2px #000; box-shadow: 0 2px 8px rgba(0,0,0,0.8);
+}
+#replay-tag-red { border-left: 3px solid #ff0055; }
+#replay-tag-blue { border-left: 3px solid #00bcd4; }

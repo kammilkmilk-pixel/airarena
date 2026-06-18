@@ -1,5 +1,5 @@
 // ============================================================================
-// ui.js - MFD 儀表板、輸入控制與隊伍切換 (重力拋物線狀態同步版)
+// ui.js - MFD 儀表板、輸入控制與隊伍切換 (觸控相容 + 座標修復版)
 // ============================================================================
 
 let isDraggingJoystick = false;
@@ -45,8 +45,7 @@ document.addEventListener("DOMContentLoaded", () => {
         if (t.weapon === 'gun') {
             t.weapon = 'missile'; showSMSAlert("🚀 FOX-2 飛彈系統通電中... [請點擊掛架開機]", "#ffbb00");
         } else {
-            t.weapon = 'gun'; showSMSAlert("⚠️ 主保險關閉：切換至機砲模式", "#ff0055");
-            if (t.pylons) t.pylons.forEach(p => { if (p.state === 'armed' || p.state === 'powering') p.state = 'standby'; });
+            t.weapon = 'gun'; showSMSAlert("⚠️ 主保險關閉：切換至機砲模式", "#ff0055");   
         }
         updateDashboardUI(t); if(window.updateTrajectoryPreview) window.updateTrajectoryPreview(t);
     });
@@ -120,12 +119,14 @@ document.addEventListener("DOMContentLoaded", () => {
         } else { if(window.selectTeam) window.selectTeam(oppId); }
     });
 
+    // 🌟 搖桿觸控事件
     const joyZone = document.getElementById('joystick-zone');
     if (joyZone) {
         joyZone.addEventListener('mousedown', startJoystickDrag); window.addEventListener('mousemove', doJoystickDrag); window.addEventListener('mouseup', endJoystickDrag);
         joyZone.addEventListener('touchstart', (e) => { startJoystickDrag(e.touches[0]); }); window.addEventListener('touchmove', (e) => { doJoystickDrag(e.touches[0]); }); window.addEventListener('touchend', endJoystickDrag);
     }
 
+    // 🌟 滾轉輪 (Roll Ring) 神經中樞：補上觸控事件！
     const rollRing = document.getElementById('roll-ring'); const staticCenter = document.getElementById('control-assembly-center'); 
     if (rollRing && staticCenter) {
         function startRoll(clientX, clientY, e) {
@@ -143,9 +144,11 @@ document.addEventListener("DOMContentLoaded", () => {
         }
         function endRoll() { isDraggingRollRing = false; }
 
+        // 滑鼠綁定
         rollRing.addEventListener('mousedown', (e) => startRoll(e.clientX, e.clientY, e));
         window.addEventListener('mousemove', (e) => doRoll(e.clientX, e.clientY));
         window.addEventListener('mouseup', endRoll);
+        // 手機觸控綁定
         rollRing.addEventListener('touchstart', (e) => { startRoll(e.touches[0].clientX, e.touches[0].clientY, e); });
         window.addEventListener('touchmove', (e) => { doRoll(e.touches[0].clientX, e.touches[0].clientY); });
         window.addEventListener('touchend', endRoll);
@@ -174,6 +177,7 @@ function resetJoystickUI() { const joyHandle = document.getElementById('joystick
 function updateDashboardUI(teamObj) {
     if (!teamObj || teamObj.id !== activeTeamId) return;
 
+    // 🌟 復活 XYZ 座標：自動偵測多種常見 ID 命名，只要有就可以更新！
     let xEl = document.getElementById('hud-val-x') || document.getElementById('val-x') || document.getElementById('pos-x') || document.getElementById('x-val');
     let yEl = document.getElementById('hud-val-y') || document.getElementById('val-y') || document.getElementById('pos-y') || document.getElementById('y-val');
     let zEl = document.getElementById('hud-val-z') || document.getElementById('val-z') || document.getElementById('pos-z') || document.getElementById('z-val');
@@ -239,23 +243,10 @@ function updateDashboardUI(teamObj) {
         else { let tColor = teamObj.id === 'red' ? '#ff0055' : '#00bcd4'; hpFill.style.backgroundColor = tColor; hpFill.style.boxShadow = `0 0 10px ${tColor}`; }
     }
 
-    // 🌟 核心修改：讓儀表板小字也同步使用「虛擬抬高判定」
     let isLocked = false; const enemyObj = teamObj.id === 'red' ? teams.blue : teams.red;
     if (teamObj.wrapper && enemyObj.wrapper && !enemyObj.isDestroyed) {
-        let distance = teamObj.wrapper.position.distanceTo(enemyObj.wrapper.position); 
-        
-        if (teamObj.weapon === 'gun') {
-            let t_flight = distance / 70.0; 
-            let virtualEnemyPos = enemyObj.wrapper.position.clone();
-            virtualEnemyPos.y += (9.8 * t_flight * t_flight);
-            let forward = new THREE.Vector3(0, 0, 1).applyQuaternion(teamObj.wrapper.quaternion).normalize(); 
-            let angle = forward.angleTo(new THREE.Vector3().subVectors(virtualEnemyPos, teamObj.wrapper.position).normalize());
-            isLocked = (distance <= 35 && angle <= Math.PI/12);
-        } else {
-            let forward = new THREE.Vector3(0, 0, 1).applyQuaternion(teamObj.wrapper.quaternion).normalize(); 
-            let angle = forward.angleTo(new THREE.Vector3().subVectors(enemyObj.wrapper.position, teamObj.wrapper.position).normalize());
-            isLocked = (distance <= 60 && angle <= Math.PI/12);
-        }
+        let distance = teamObj.wrapper.position.distanceTo(enemyObj.wrapper.position); let forward = new THREE.Vector3(0, 0, 1).applyQuaternion(teamObj.wrapper.quaternion).normalize(); let angle = forward.angleTo(new THREE.Vector3().subVectors(enemyObj.wrapper.position, teamObj.wrapper.position).normalize());
+        isLocked = teamObj.weapon === 'gun' ? (distance <= 35 && angle <= Math.PI/12) : (distance <= 60 && angle <= Math.PI/12);
     }
 
     let elSmsContent = document.getElementById('sms-text-content');
@@ -271,12 +262,35 @@ function updateDashboardUI(teamObj) {
 
     if (teamObj.pylons) {
         teamObj.pylons.forEach(p => {
-            let stick = document.getElementById(`pylon-stick-${p.id}`); let lamp = document.getElementById(`pylon-lamp-${p.id}`);
-            if (stick && lamp) {
-                if (p.state === 'empty') { stick.className = 'pylon-stick'; lamp.className = 'pylon-lamp'; lamp.style.opacity = '0.1'; } 
-                else if (p.state === 'powering') { stick.className = 'pylon-stick stick-up'; lamp.className = 'pylon-lamp lamp-cold'; } 
-                else if (p.state === 'armed') { stick.className = 'pylon-stick stick-up'; lamp.className = 'pylon-lamp lamp-hot'; } 
-                else { stick.className = 'pylon-stick'; lamp.className = 'pylon-lamp'; lamp.style.opacity = '0.3'; }
+            let stick = document.getElementById(`pylon-stick-${p.id}`); 
+            let lamp = document.getElementById(`pylon-lamp-${p.id}`);
+            
+            // 1. 徹底隱藏底下的小燈
+            if (lamp) lamp.style.display = 'none'; 
+
+            if (stick) {
+                // 2. 將原本的撥桿直接放大，改造成方形戰術大燈
+                stick.style.width = '18px';
+                stick.style.height = '18px';
+                stick.style.borderRadius = '4px';
+                stick.style.marginTop = '4px';
+                stick.style.transition = 'all 0.3s ease';
+                stick.className = 'pylon-stick'; // 清除舊的位移 class
+
+                // 3. 根據狀態變色 (黃、綠、紅、熄滅)
+                if (p.state === 'empty') { 
+                    stick.style.background = '#ff0033'; // 🔴 紅色 (已發射/耗盡)
+                    stick.style.boxShadow = '0 0 10px #ff0033'; 
+                } else if (p.state === 'powering') { 
+                    stick.style.background = '#ffaa00'; // 🟡 黃色 (準備中)
+                    stick.style.boxShadow = '0 0 12px #ffaa00'; 
+                } else if (p.state === 'armed') { 
+                    stick.style.background = '#00ff88'; // 🟢 綠色 (準備完成)
+                    stick.style.boxShadow = '0 0 15px #00ff88'; 
+                } else { 
+                    stick.style.background = '#222';    // ⚫ 熄滅 (待命)
+                    stick.style.boxShadow = 'inset 0 2px 4px #000'; 
+                }
             }
         });
     }

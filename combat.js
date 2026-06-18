@@ -49,20 +49,39 @@ function executeTurnSimultaneously() {
         if (window.ghostWrapper) window.ghostWrapper.visible = false; // 確保鬼影不殘留
 
         t.flightCurve = new THREE.CatmullRomCurve3(t.pathPoints, false, 'catmullrom', 0);
-        logEntry[id] = { pts: [...t.pathPoints], quats: [...t.pathQuats], chain: [...t.chain], wasFlaresArmed: t.wasFlaresArmedThisTurn };
+        logEntry[id] = { pts: [...t.pathPoints], quats: [...t.pathQuats], chain: [...t.chain], wasFlaresArmed: t.wasFlaresArmedThisTurn, damageTaken: 0 };
 
+        // 🌟 新增：齊射延遲計數器 (Ripple Fire Counter)
+        let fireDelayCounter = 0; 
+        
         if (t.pylons) {
             t.pylons.forEach(p => {
                 if (p.lineMesh) { scene.remove(p.lineMesh); p.lineMesh = null; }
                 let isFiringNow = p.state === 'armed' && t.wpnQueued && t.weapon === 'missile';
                 let activeM = t.activeMissiles ? t.activeMissiles.find(m => m.pylonId === p.id) : null;
+                
                 if (isFiringNow && !activeM) {
-                    let launchQuat = t.pathQuats[0]; let visualLineOffset = new THREE.Vector3(0, -0.05, 0.2); let worldOffset = p.localPosition.clone().add(visualLineOffset).applyQuaternion(launchQuat); let startPos = t.pathPoints[0].clone().add(worldOffset);
+                    // 🌟 每個掛架延遲 12 個物理影格 (約等於真實時間 0.18 秒)
+                    let launchStep = fireDelayCounter * 12; 
+                    fireDelayCounter++; // 計數器 +1，下一枚會再晚 12 幀
+                    
                     let initAP = (typeof MISSILE_MAX_AP !== 'undefined') ? MISSILE_MAX_AP : 150;
-                    activeM = { pylonId: p.id, active: true, ap: initAP, pos: startPos, quat: launchQuat.clone(), exploded: false };
-                    t.activeMissiles.push(activeM); p.state = 'empty'; 
+                    
+                    // 🚨 注意：這裡不再立刻計算 3D 座標，而是給它一個 launchStep 讓它「排隊」
+                    activeM = { 
+                        pylonId: p.id, 
+                        active: false,           // 初始設為未激活
+                        launchStep: launchStep,  // 記錄該在哪一幀點火
+                        ap: initAP, 
+                        pos: new THREE.Vector3(), 
+                        quat: new THREE.Quaternion(), 
+                        exploded: false 
+                    };
+                    t.activeMissiles.push(activeM); 
+                    p.state = 'empty'; 
                 }
-                if (activeM && activeM.active && !activeM.exploded) { logEntry[`${id}MslTracks`][p.id] = []; }
+                if (activeM && activeM.active !== false && !activeM.exploded) { logEntry[`${id}MslTracks`][p.id] = []; }
+                else if (activeM && !activeM.exploded) { logEntry[`${id}MslTracks`][p.id] = []; } // 確保陣列有被初始化
             });
         }
     });
@@ -106,19 +125,97 @@ function executeTurnSimultaneously() {
 
     for (let step = 0; step <= 100; step++) {
         let ratio = step / 100; 
+        ['red', 'blue'].forEach(id => {
+            let t = teams[id]; let enemy = id === 'red' ? teams.blue : teams.red;
+            if (t.isDestroyed || enemy.isDestroyed) return;
+
+            // 檢查這回合是否扣下扳機開砲
+            if (t.chain && t.chain.length > 0 && t.chain[0].fire === 'gun') {
+                let stats = CONFIG.aircrafts[t.type || 'mig21'].throttleStats[t.throttle || 2] || { gunAngleMult: 1.0, gunRangeMult: 1.0 };
+                let dRange = (typeof GUN_RANGE !== 'undefined' ? GUN_RANGE : 35) * stats.gunRangeMult;
+                let dAngle = (typeof GUN_ANGLE !== 'undefined' ? GUN_ANGLE : Math.PI/12) * stats.gunAngleMult;
+
+                let tIdx = Math.min(t.pathPoints.length - 1, Math.floor(ratio * t.pathPoints.length));
+                let eIdx = Math.min(enemy.pathPoints.length - 1, Math.floor(ratio * enemy.pathPoints.length));
+
+                let p1 = t.pathPoints[tIdx];
+                let p2 = enemy.pathPoints[eIdx];
+                let fwd = new THREE.Vector3(0, 0, 1).applyQuaternion(t.pathQuats[tIdx]);
+
+                let vecToEnemy = new THREE.Vector3().subVectors(p2, p1);
+                let forwardDist = vecToEnemy.dot(fwd);
+
+                if (forwardDist > 0 && forwardDist <= dRange) {
+                    let timeSinceSpawn = forwardDist / (dRange * 2.0);
+                    let gravDrop = 0.5 * 9.8 * (timeSinceSpawn * 2) * (timeSinceSpawn * 2) * 0.5;
+
+                    let expectedBulletPos = p1.clone().add(fwd.clone().multiplyScalar(forwardDist));
+                    expectedBulletPos.y -= gravDrop;
+
+                    let coneRadius = forwardDist * Math.tan(dAngle);
+
+                    if (expectedBulletPos.distanceTo(p2) <= coneRadius) {
+                        logEntry[enemy.id].damageTaken += (GUN_DAMAGE / 100);
+                    }
+                }
+            }
+        });
         let cFlares = frameFlares[step] || [];
         ['red', 'blue'].forEach(id => {
             let t = teams[id]; let enemy = id === 'red' ? teams.blue : teams.red;
             if (t.isDestroyed || !t.activeMissiles) return;
             t.activeMissiles.forEach(activeM => {
-                if (!activeM.active || activeM.exploded || activeM.ap <= 0) return; 
+                if (activeM.exploded || activeM.ap <= 0) return; 
+                
+                // 🌟 1. 「排隊中」的飛彈：時間還沒到，按兵不動
+                if (!activeM.active) {
+                    if (step < activeM.launchStep) {
+                        // 填入 null 佔位符，確保 ACMI 播放時序完美對齊，不會提早畫出飛彈
+                        logEntry[`${id}MslTracks`][activeM.pylonId].push(null); 
+                        return;
+                    }
+                    
+                    // 🌟 2. 「點火脫離」的瞬間：精準抓取戰機當前幀數的座標
+                    if (step === activeM.launchStep) {
+                        activeM.active = true; // 正式點火！
+                        
+                        // 計算戰機在這一個影格的準確位置
+                        let tIdx = Math.min(t.pathPoints.length - 1, Math.floor(ratio * t.pathPoints.length));
+                        let acPos = t.pathPoints[tIdx];
+                        let acQuat = t.pathQuats[tIdx];
+                        
+                        // 套用掛架相對於機身的偏移量
+                        let pylonConfig = t.pylons.find(p => p.id === activeM.pylonId);
+                        let visualLineOffset = new THREE.Vector3(0, -0.05, 0.2); 
+                        let worldOffset = pylonConfig.localPosition.clone().add(visualLineOffset).applyQuaternion(acQuat); 
+                        
+                        activeM.pos.copy(acPos).add(worldOffset);
+                        activeM.quat.copy(acQuat);
+                        
+                        logEntry[`${id}MslTracks`][activeM.pylonId].push({ pos: activeM.pos.clone(), quat: activeM.quat.clone() });
+                        return; // 脫離的這一幀先不往前飛，避免穿模
+                    }
+                }
+
+                // 🌟 3. 正常飛行運算 (原本的代碼)
                 let eIdx = Math.min(enemy.pathPoints.length - 1, Math.floor(ratio * enemy.pathPoints.length));
                 let stepRes = simulateMissileStep(activeM.pos, activeM.quat, enemy.pathPoints[eIdx], enemy.pathQuats[eIdx], activeM.ap, t, enemy, cFlares, activeM);
-                activeM.pos.copy(stepRes.pos); activeM.quat.copy(stepRes.quat); activeM.ap = stepRes.ap;
+                
+                activeM.pos.copy(stepRes.pos); 
+                activeM.quat.copy(stepRes.quat); 
+                activeM.ap = stepRes.ap;
                 logEntry[`${id}MslTracks`][activeM.pylonId].push({ pos: activeM.pos.clone(), quat: activeM.quat.clone() });
+                
                 if (stepRes.exploded) { 
                     activeM.exploded = true; logEntry[`${id}ExplodedAt`][activeM.pylonId] = step;
                     logEntry[`${id}MslIsSelfDestruct`] = logEntry[`${id}MslIsSelfDestruct`] || {}; logEntry[`${id}MslIsSelfDestruct`][activeM.pylonId] = stepRes.selfDestructed;
+                    let distToEnemy = activeM.pos.distanceTo(enemy.pathPoints[eIdx]);
+                    let fuseR = (CONFIG.weapons['fox2'] && CONFIG.weapons['fox2'].fuseRange) ? CONFIG.weapons['fox2'].fuseRange : 3.5;
+                    
+                    // 如果距離敵機夠近 (含容錯半徑)，代表結實命中！
+                    if (distToEnemy <= fuseR + 1.5) { 
+                        logEntry[enemy.id].damageTaken += MISSILE_DAMAGE;
+                    }
                 }
             });
         });
@@ -129,12 +226,25 @@ function executeTurnSimultaneously() {
     battleLog.push(logEntry); 
     let sld = document.getElementById('replay-slider'); 
     if(sld) { sld.min = 1; sld.max = battleLog.length + 0.99; sld.step = 0.01; sld.disabled = false; }
-    setTimeout(() => { let ls = document.getElementById('combat-lock-screen'); if(ls) ls.style.display = 'none'; isAnimating = true; animProgress = 0; let rs = document.getElementById('replay-status'); if(rs) rs.innerText = "狀態: 播放中"; }, 300);
+    ls = document.getElementById('combat-lock-screen'); 
+    if(ls) ls.style.display = 'none';
+
+    rSt = document.getElementById('replay-status'); 
+    if(rSt) rSt.innerText = "狀態: 播放中";
+
+    if (typeof window.startCombatAnimation === 'function') {
+        window.startCombatAnimation();
+    } else {
+        isAnimating = true;
+        animProgress = 0;
+    }
 }
 
 function finishTurnSimultaneously() {
-    animProgress = 1.0; isAnimating = false; 
-    let rs = document.getElementById('replay-status'); if(rs) rs.innerText = "狀態: 規劃中";
+    animProgress = 0; 
+    isAnimating = false; 
+    let rs = document.getElementById('replay-status'); 
+    if(rs) { rs.innerText = "狀態: 戰術規劃中"; rs.style.color = "#aaa"; }
     
     try {
         let lastLog = battleLog[battleLog.length-1];
@@ -145,7 +255,18 @@ function finishTurnSimultaneously() {
 
         ['red', 'blue'].forEach(id => {
             let t = teams[id]; if(t.isDestroyed) return;
-            
+            if (lastLog[id] && lastLog[id].damageTaken > 0) {
+                t.hp = Math.max(0, t.hp - lastLog[id].damageTaken);
+                if (t.hp <= 0) {
+                    t.isDestroyed = true;
+                    console.log(`💀 ${id} 小隊戰機已墜毀！`);
+                }
+            }
+            if (t.isDestroyed) {
+                if (trajectoryMeshes[id]) { scene.remove(trajectoryMeshes[id]); trajectoryMeshes[id] = null; }
+                t.ap = 0; t.throttle = 1; t.ready = true;
+                return; 
+            }
             const finalPos = t.flightCurve.getPointAt(1.0); const finalQuat = getQuatAt(1.0, t.pathQuats);
             t.wrapper.position.copy(finalPos); t.wrapper.quaternion.copy(finalQuat); t.wrapper.userData.logicalQuat = finalQuat.clone();
             t.startPos = finalPos.clone(); t.startQuat = finalQuat.clone();
@@ -195,7 +316,20 @@ function finishTurnSimultaneously() {
             }
         });
     } catch (error) { console.error("回合結算錯誤：", error); }
-
+    if (teams.red.isDestroyed || teams.blue.isDestroyed) {
+        let ls = document.getElementById('combat-lock-screen'); if(ls) ls.style.display = 'none';
+        
+        let winner = "DRAW (雙方同歸於盡)";
+        if (teams.red.isDestroyed && !teams.blue.isDestroyed) winner = "BLUE TEAM 勝利";
+        if (!teams.red.isDestroyed && teams.blue.isDestroyed) winner = "RED TEAM 勝利";
+        
+        const banner = document.getElementById('phase-banner'); 
+        if (banner) { 
+            banner.innerHTML = `<span style="font-size: 40px; color: #ffeb3b; text-shadow: 2px 2px 10px #ff0000;">ENGAGEMENT OVER</span><br><span style="font-size: 24px; color: #fff;">${winner}</span>`; 
+            banner.style.opacity = '1'; 
+        }
+        return; // 遊戲結束，封鎖回合推進
+    }
     currentTurn++;
     let ls = document.getElementById('combat-lock-screen'); if(ls) ls.style.display = 'none';
     let db = document.getElementById('ui-dashboard'); if(db) { db.style.pointerEvents = 'auto'; db.style.opacity = '1.0'; }

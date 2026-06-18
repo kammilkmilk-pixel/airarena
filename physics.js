@@ -32,76 +32,26 @@ function simulateFlight(teamObj, chain) {
     return { points, quats, finalAP: activeAP };
 }
 
-// 🌟 飛彈推演邏輯重寫：現在飛彈會去「看」所有的熱源並比較溫度！
-function simulateMissileStep(pos, quat, targetPos, targetQuat, ap, teamObj, enemyObj, flares, activeM) {
-    let forward = new THREE.Vector3(0, 0, 1).applyQuaternion(quat).normalize();
-    let speed = typeof MISSILE_SPEED !== 'undefined' ? MISSILE_SPEED : 3.5; 
-    pos.add(forward.clone().multiplyScalar(speed));
-    
-    let bestTargetPos = targetPos.clone();
-    let maxHeatSeen = -1;
+// ============================================================================
+// physics.js 
+// ============================================================================
 
-    // --- 1. 測量敵機熱量 ---
-    // 飛機熱量 = (引擎基礎熱量 100 + 儀表板累積的 heat) * 尾管暴露角度
-    let enemyExposedHeat = calculateExposedHeat(100 + (enemyObj.heat || 0), targetPos, targetQuat, pos);
-    let distToEnemy = pos.distanceTo(targetPos);
-    let enemyDir = new THREE.Vector3().subVectors(targetPos, pos).normalize();
-    let enemyAngle = forward.angleTo(enemyDir);
-
-    // 判斷敵機是否在導引頭的視角 (Angle) 與射程 (Range) 內
-    if (distToEnemy <= SEEKER_RANGE && enemyAngle <= SEEKER_ANGLE && enemyExposedHeat >= SEEKER_MIN_HEAT) {
-        maxHeatSeen = enemyExposedHeat;
-    }
-
-    // --- 2. 測量周圍「熱焰彈」熱量 (這就是你的 500、150 發揮作用的地方) ---
-    if (flares && flares.length > 0) {
-        flares.forEach(f => {
-            if (f.teamId === enemyObj.id && f.heat > 0) {
-                let fDist = pos.distanceTo(f.pos);
-                let fDir = new THREE.Vector3().subVectors(f.pos, pos).normalize();
-                let fAngle = forward.angleTo(fDir);
-                
-                if (fDist <= SEEKER_RANGE && fAngle <= SEEKER_ANGLE) {
-                    // 距離越近，飛彈感受到的熱量越強
-                    let apparentHeat = f.heat * (1 - (fDist / SEEKER_RANGE));
-                    
-                    // 💥 如果這顆熱焰彈的溫度大於飛機的暴露溫度，飛彈就會被騙走！
-                    if (apparentHeat > maxHeatSeen) {
-                        maxHeatSeen = apparentHeat;
-                        bestTargetPos = f.pos.clone(); // 鎖定點切換到熱焰彈上
-                    }
-                }
-            }
-        });
-    }
-
-    // --- 導航轉向 ---
-    if (maxHeatSeen > -1) {
-        // 朝向判定後「最熱」的目標轉向
-        let toTarget = new THREE.Vector3().subVectors(bestTargetPos, pos).normalize();
-        let qTarget = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0,0,1), toTarget);
-        quat.slerp(qTarget, typeof MISSILE_TURN_RATE !== 'undefined' ? MISSILE_TURN_RATE : 0.04);
-    } 
-    // 若 maxHeatSeen === -1，代表脫鎖瞎掉，飛彈會維持原來的方向直線盲飛
-
-    // --- 爆炸判定 ---
-    let exploded = false; let selfDestructed = false;
-    
-    // 如果撞到敵機，或是撞到被騙去追的熱焰彈，就觸發近炸引信
-    if (distToEnemy < 5 || (bestTargetPos !== targetPos && pos.distanceTo(bestTargetPos) < 2)) {
-        exploded = true; 
-    }
-    
-    ap -= (typeof MISSILE_DRAG !== 'undefined' ? MISSILE_DRAG : 0.3);
-    if (ap <= 0 && !exploded) { exploded = true; selfDestructed = true; }
-    
-    return { pos: pos, quat: quat, ap: ap, exploded: exploded, selfDestructed: selfDestructed };
+function getQuatAt(t, quats) { 
+    if (!quats || quats.length === 0) return new THREE.Quaternion(); 
+    if (t <= 0) return quats[0]; 
+    if (t >= 1) return quats[quats.length - 1]; 
+    let p = t * (quats.length - 1); 
+    let idx = Math.floor(p); 
+    return quats[idx].clone().slerp(quats[idx + 1], p - idx); 
 }
 
-function calculateExposedHeat(baseHeat, targetPos, targetQuat, seekerPos) { 
-    let rearDir = new THREE.Vector3(0, 0, -1).applyQuaternion(targetQuat).normalize(); 
-    let seekerDir = new THREE.Vector3().subVectors(seekerPos, targetPos).normalize(); 
-    let aspectDot = rearDir.dot(seekerDir); 
-    // 側面或正面暴露的熱量只有尾管直視的 10% ~ 50%
-    return baseHeat * Math.max(0.1, (aspectDot + 1) * 0.5); 
+// 🌟 新增：光速座標插值函數 (直接取代耗能的 CatmullRomCurve3)
+function getPosAt(t, points) {
+    if (!points || points.length === 0) return new THREE.Vector3();
+    if (points.length === 1) return points[0].clone();
+    if (t <= 0) return points[0].clone();
+    if (t >= 1) return points[points.length - 1].clone();
+    let p = t * (points.length - 1);
+    let idx = Math.floor(p);
+    return points[idx].clone().lerp(points[idx + 1], p - idx);
 }
