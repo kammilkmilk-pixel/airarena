@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
     <title>垂直空域 (Vertical Airspace) - 側翼 MFD 完全體</title>
-    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="css/style.css">
 </head>
 <body class="theme-red">
     <div id="startup-screen">
@@ -13,6 +13,7 @@
             <span style="color: #ff0055; font-size: 24px; letter-spacing: 6px;">ENGAGEMENT AUTHORIZED</span>
         </div>
     </div>
+    
     <svg id="axis-widget" viewBox="-50 -50 100 100" style="position:absolute; top:20px; left:20px; width:80px; height:80px; pointer-events:none; z-index:10; overflow:visible;">
         <line id="axis-x-line" x1="0" y1="0" x2="30" y2="0" stroke="#ff5252" stroke-width="3" stroke-linecap="round"/>
         <text id="axis-x-label" x="35" y="4" fill="#ff5252" font-size="12" font-weight="bold" font-family="sans-serif">X</text>
@@ -44,19 +45,19 @@
     <div id="alt-label-ghost" class="alt-label"></div>
     
     <div id="canvas-container"></div>
+    
     <div id="dynamic-hud">
-    <div id="hud-shape" class="shape-square"></div>
-    <div id="hud-data-tag">
-        <span id="hud-tgt-type">MIG21</span><br>
-        ALT: <span id="hud-tgt-alt">0</span>m<br>
-        DST: <span id="hud-tgt-dist">0</span>m
+        <div id="hud-shape" class="shape-square"></div>
+        <div id="hud-data-tag">
+            <span id="hud-tgt-type">MIG21</span><br>
+            ALT: <span id="hud-tgt-alt">0</span>m<br>
+            DST: <span id="hud-tgt-dist">0</span>m
+        </div>
     </div>
-</div>
 
-<div id="replay-tag-red" class="replay-floating-tag"></div>
-<div id="replay-tag-blue" class="replay-floating-tag"></div>
+    <div id="replay-tag-red" class="replay-floating-tag"></div>
+    <div id="replay-tag-blue" class="replay-floating-tag"></div>
 
-<script src="hud.js"></script>
     <div id="team-selector-panel" style="position: absolute; top: 20px; right: 20px; z-index: 9999; display: flex; gap: 10px;">
         <button id="btn-sel-red" style="background: #ff0055; color: #fff; border: 2px solid #fff; padding: 8px 16px; font-weight: bold; cursor: pointer; border-radius: 4px; box-shadow: 0 0 10px rgba(255,0,85,0.5);">RED TEAM</button>
         <button id="btn-sel-blue" style="background: #111; color: #00bcd4; border: 2px solid #444; padding: 8px 16px; font-weight: bold; cursor: pointer; border-radius: 4px;">BLUE TEAM</button>
@@ -186,17 +187,21 @@
         </div>
     </div>
        
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
 
-    <script src="config.js"></script>
-    <script src="globals.js"></script>
-    <script src="physics.js"></script>
-    <script src="weapon.js"></script>
-    <script src="render.js"></script>
-    <script src="combat.js"></script>
-    <script src="ui.js"></script>
-    <script src="game.js"></script>
+    <script src="js/core/config.js"></script>
+    <script src="js/core/globals.js"></script>
+
+    <script src="js/logic/physics.js"></script>
+    <script src="js/logic/weapon.js"></script>
+    <script src="js/logic/combat.js"></script>
+
+    <script src="js/view/render.js"></script>
+    <script src="js/view/hud.js"></script>
+
+    <script src="js/view/ui.js"></script>
+    <script src="js/game.js"></script>
 </body>
 </html>
