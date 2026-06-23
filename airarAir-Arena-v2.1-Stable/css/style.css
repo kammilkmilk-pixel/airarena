@@ -1,0 +1,318 @@
+/* ============================================================================
+   垂直空域 (Vertical Airspace) - 終極側翼 MFD 軍規控制面板樣式表
+   ============================================================================ */
+
+body { 
+    margin: 0; padding: 0; overflow: hidden; 
+    background-color: #0c0c0c; font-family: 'Courier New', monospace; user-select: none; 
+}
+
+/* 3D 畫布鋪滿底層 */
+#canvas-container { 
+    position: fixed !important; top: 0; left: 0; right: 0; bottom: 0; z-index: 0; pointer-events: auto !important; 
+}
+#canvas-container canvas { display: block; width: 100vw; height: 100vh; cursor: grab; }
+#canvas-container canvas:active { cursor: grabbing; }
+
+/* 總包裝外殼 */
+#ui-wrapper { 
+    position: absolute; bottom: 0; left: 0; width: 100vw; display: flex; flex-direction: column; z-index: 10; pointer-events: none; 
+}
+
+/* 舊版殘留組件防崩潰隱藏 */
+#team-tabs, .team-tab, .ready-badge, .bar-container, #cost-preview, #adi-container { display: none !important; }
+
+/* 頂部重播時序條 */
+#replay-control-bar { 
+    position: absolute; top: 20px; left: 50%; transform: translateX(-50%); background: rgba(15, 15, 15, 0.95); border: 2px solid #555; border-radius: 8px; padding: 6px 16px; display: flex; align-items: center; gap: 12px; z-index: 9999; box-shadow: 0 0 20px rgba(0,0,0,0.8); color: #fff; width: 620px; max-width: 90vw; box-sizing: border-box; pointer-events: auto;
+}
+.replay-btn { background: #252525; border: 1px solid #444; border-radius: 4px; color: #fff; font-size: 11px; font-weight: bold; padding: 5px 10px; cursor: pointer; font-family: inherit; }
+#replay-status { font-size: 11px; color: #00ff88; font-weight: bold; width: 85px; text-align: center; }
+.replay-timeline-container { flex-grow: 1; display: flex; align-items: center; }
+#replay-slider { width: 100%; appearance: none; -webkit-appearance: none; height: 6px; background: #444; border-radius: 3px; cursor: pointer; }
+#replay-slider::-webkit-slider-thumb { appearance: none; -webkit-appearance: none; width: 14px; height: 14px; border-radius: 50%; background: #ffeb3b; box-shadow: 0 0 6px #ffeb3b; }
+
+#stall-screen { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(255, 0, 0, 0.25); z-index: 9000; display: none; justify-content: center; align-items: center; pointer-events: none; }
+#stall-text { color: white; font-size: 40px; font-weight: bold; text-shadow: 0 0 15px red; text-align: center; }
+.alt-label { position: absolute; font-size: 11px; font-weight: bold; color: #fff; text-shadow: 1px 1px 2px #000; pointer-events: none; display: none; z-index: 15; }
+
+/* ==========================================================================
+   座艙火控主體結構佈局 (Symmetry Layout)
+   ========================================================================== */
+#combat-hud-mobile {
+    position: absolute; bottom: 0; left: 50%; transform: translateX(-50%);
+    width: 100vw; max-width: 720px; display: flex; flex-direction: column; align-items: center; padding-bottom: 2px; box-sizing: border-box; pointer-events: none;
+}
+#combat-hud-mobile button, #combat-hud-mobile div { pointer-events: auto; }
+
+/* ─── 頂部懸浮：戰術電腦下沉 ─── */
+#tactical-computer-module {
+    background: rgba(12, 12, 12, 0.98); border: 2px solid #3a3a3a; border-radius: 8px 8px 0 0;
+    width: 410px; display: flex; flex-direction: column; align-items: center; padding: 4px; box-shadow: 0 -4px 15px rgba(0,0,0,0.7); z-index: 110; margin-bottom: -45px; 
+}
+#pylon-weapons-bay { display: flex; justify-content: center; gap: 24px; background: rgba(5,5,5,0.9); padding: 2px 10px; border-radius: 4px; border: 1px solid #222; margin-bottom: 4px; }
+.pylon-switch-wrapper { display: flex; flex-direction: column; align-items: center; gap: 4px; cursor: pointer; }
+.pylon-label { font-size: 8px; color: #888; font-weight: bold; }
+.pylon-stick { width: 6px; height: 14px; background: #444; border-radius: 2px; transition: transform 0.2s; }
+.pylon-stick.stick-up { transform: translateY(-2px); background: #ffeb3b; }
+.pylon-lamp { width: 8px; height: 8px; background: #222; border-radius: 50%; transition: all 0.2s; opacity: 0.2; }
+.pylon-lamp.lamp-cold { background: #ffbb00; box-shadow: 0 0 6px #ffbb00; opacity: 1; }
+.pylon-lamp.lamp-hot { background: #00ff88; box-shadow: 0 0 8px #00ff88; opacity: 1; }
+
+#sms-display-screen {
+    width: 95%; background: #0c0c0c; border: 1px solid #444; border-radius: 4px; padding: 4px 8px; display: flex; flex-direction: row; justify-content: space-between; align-items: center; box-sizing: border-box;
+}
+#sms-text-content { font-size: 13px; font-weight: bold; color: #ffeb3b; text-shadow: 0 0 5px rgba(255,235,59,0.7); cursor: pointer; flex-grow: 1; text-align: left; }
+#sms-enter-btn {
+    width: 42px; height: 22px; background: #111; border: 1.5px solid #00ff88; color: #00ff88; font-family: inherit; font-size: 10px; font-weight: bold; border-radius: 3px; cursor: pointer; display: flex; justify-content: center; align-items: center;
+}
+#sms-enter-btn:active { transform: scale(0.92); background: #00aa5e; }
+
+/* 1. 凹字型座艙主體外框 (強行物理收窄最大寬度，強制兩側朝中央擠壓) */
+#u-shape-panel {
+    background: rgba(15, 15, 15, 0.95) !important; 
+    border: 2px solid #3a3a3a !important; 
+    border-radius: 8px !important; 
+    
+    /* 🟢 核心解藥：直接把最大寬度寫死成 580px（比原來的 600px 精確縮小 20px！） */
+    width: 96% !important;
+    max-width: 580px !important; 
+    height: 160px !important; 
+    
+    display: flex !important; 
+    flex-direction: row !important; 
+    justify-content: space-between !important; 
+    align-items: stretch !important; 
+    
+    padding: 4px !important; 
+    box-sizing: border-box !important; 
+    box-shadow: 0 4px 20px rgba(0,0,0,0.8) !important; 
+    z-index: 10 !important;
+}
+
+/* 2. 左側直柱臂：動力閥結構 (維持 60px 寬度不變形) */
+#left-arm-throttle {
+    width: 60px !important; 
+    background: rgba(22,22,22,0.7) !important; 
+    border-right: 1px solid #222 !important;
+    display: flex !important; 
+    flex-direction: column !important; 
+    justify-content: space-around !important; 
+    padding: 2px !important; 
+    box-sizing: border-box !important;
+}
+#left-arm-throttle .thr-btn { 
+    width: 100% !important; 
+    height: 28% !important; 
+    font-size: 11px !important; 
+    padding: 0 !important; 
+    text-align: center !important; 
+    background: #222 !important;
+    color: #aaa !important;
+    border: 1px solid #444 !important;
+    font-weight: bold !important;
+    cursor: pointer !important;
+    border-radius: 4px !important;
+    transition: all 0.15s ease !important;
+}
+#left-arm-throttle #btn-thr-3.active { background: #ff5500 !important; color: #fff !important; border-color: #ffaa00 !important; box-shadow: 0 0 10px #ff5500 !important; }
+#left-arm-throttle #btn-thr-2.active { background: #4caf50 !important; color: #fff !important; border-color: #81c784 !important; box-shadow: 0 0 10px #4caf50 !important; }
+#left-arm-throttle #btn-thr-1.active { background: #2196f3 !important; color: #fff !important; border-color: #64b5f6 !important; box-shadow: 0 0 10px #2196f3 !important; }
+
+/* 3. 右側直柱臂：生命值條結構 (維持 60px 寬度不變形) */
+#right-arm-hp {
+    width: 60px !important; 
+    background: rgba(22,22,22,0.7) !important; 
+    border-left: 1px solid #222 !important;
+    display: flex !important; 
+    flex-direction: column !important; 
+    align-items: center !important; 
+    justify-content: space-between !important; 
+    padding: 4px 2px !important; 
+    box-sizing: border-box !important;
+}
+.hp-track-vertical { 
+    width: 16px !important; 
+    flex-grow: 1 !important; 
+    background: #151515 !important; 
+    border: 1px solid #444 !important; 
+    border-radius: 3px !important; 
+    display: flex !important; 
+    align-items: flex-end !important; 
+    overflow: hidden !important; 
+}
+#hud-hp-fill-vertical { 
+    width: 100% !important; 
+    height: 100%; 
+    background: #ff3333 !important; 
+    box-shadow: inset 0 0 6px #000, 0 0 8px rgba(255,51,51,0.6) !important; 
+    transition: height 0.3s ease !important; 
+}
+.hp-text-label { font-size: 12px; font-weight: bold; color: #ff3333; margin-top: 2px; }
+
+/* 4. 中央綜合容器 */
+#center-instruments { 
+    display: flex !important; 
+    flex-direction: row !important; 
+    justify-content: space-between !important; 
+    align-items: flex-start !important; 
+    width: 100% !important;
+    height: 125px !important; 
+    padding: 0 2px !important;
+    box-sizing: border-box !important;
+    margin-top: 25px !important; 
+    margin-bottom: 0px !important;
+}
+
+/* 5. MFD 左右兩側長方形按鈕直列 (精確調整位置，卡進下腹部空隙) */
+.btn-column-side {
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 5px !important; 
+    width: 65px !important;
+    margin-top: 20px !important; /* 讓長方形按鈕貼合戰術電腦下方邊緣 */
+}
+
+/* 6. 左右正圓指針錶盤 (從底邊成功脫離，優雅上浮) */
+.gauge-dial-box {
+    position: relative !important;
+    top: -4px !important; /* 🟢 完美上浮，不再貼底 */
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: center !important;
+    width: 82px !important;
+}
+
+/* 7. 中央虛擬搖桿總成 (與兩側正圓錶盤一字切平) */
+#control-assembly-center {
+    transform: scale(0.80) !important; 
+    transform-origin: top center !important; 
+    position: relative !important;
+    top: -4px !important; /* 🟢 完美齊頂一字水平線 */
+    width: 120px !important; 
+    height: 120px !important;
+    margin: 0 !important;
+    z-index: 10 !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+}
+
+.cockpit-rect-btn.btn-g-limit.active { background: #1b421d !important; color: #4caf50 !important; border-color: #4caf50 !important; box-shadow: 0 0 6px rgba(76,175,80,0.5) !important; }
+.cockpit-rect-btn.armed { background: #ff9800 !important; color: #000 !important; border-color: #ffb74d !important; box-shadow: 0 0 8px #ff9800 !important; animation: pulseFlare 0.5s infinite alternate; }
+.cockpit-rect-btn.empty { background: #151515 !important; color: #444 !important; border-color: #222 !important; cursor: not-allowed !important; }
+.cockpit-rect-btn.btn-standby { background: #aa0000 !important; color: #fff !important; border-color: #ff3333 !important; }
+.cockpit-rect-btn.btn-standby:hover { background: #ff0000 !important; box-shadow: 0 0 8px #ff3333 !important; }
+.cockpit-rect-btn.btn-standby.ready { background: #4caf50 !important; color: #fff !important; border-color: #81c784 !important; box-shadow: 0 0 8px #4caf50 !important; }
+.cockpit-rect-btn.btn-empty { background: #1c1c1c !important; color: #333 !important; border-color: #252525 !important; cursor: default !important; }
+
+@keyframes pulseFlare { from { filter: brightness(1); } to { filter: brightness(1.3); } }
+
+/* 中央正圓形儀表組體（死鎖 1/3 黃金齊頂參數） */
+.instruments-circle-core { display: flex !important; flex-direction: row !important; justify-content: center !important; align-items: flex-start !important; gap: 8px !important; }
+.gauge-dial-box { position: relative !important; top: 18px !important; display: flex; flex-direction: column; align-items: center; width: 82px; }
+.gauge-dial { width: 82px; height: 82px; filter: drop-shadow(0px 3px 4px rgba(0,0,0,0.6)); }
+.dial-bg { fill: #111111; stroke: #333333; stroke-width: 2.5; }
+.dial-needle { transform-origin: 50px 50px; transition: transform 0.25s ease; }
+.digital-val { font-size: 10px; font-weight: bold; color: #00ff88; margin-top: 2px; background: #000; padding: 1px 4px; border-radius: 3px; border: 1px solid #222; }
+
+/* 中央虛擬搖桿（110px，縮放後從頂部與錶盤絕對齊頂） */
+#control-assembly-center {
+    width: 120px; height: 120px; position: relative !important; top: 18px !important; transform: scale(0.85) !important; transform-origin: top center !important; display: flex; align-items: center; justify-content: center; z-index: 10 !important; margin: 0 !important;
+}
+#roll-ring { position: absolute; width: 110px; height: 110px; border: 2px dashed #666; border-radius: 50%; box-shadow: inset 0 0 10px rgba(0,0,0,0.8); z-index: 5; }
+.nav-light { position: absolute; top: calc(50% - 6px); width: 12px; height: 12px; border-radius: 50%; border: 1px solid #fff; }
+.light-port { left: -8px; background: #ff0055; box-shadow: 0 0 10px #ff0055; } 
+.light-starbd { right: -8px; background: #00ff88; box-shadow: 0 0 10px #00ff88; } 
+#joystick-zone { position: absolute; width: 80px; height: 80px; background: radial-gradient(circle, #222 30%, #111 100%); border: 2px solid #3a3a3a; border-radius: 50%; box-shadow: inset 0 2px 5px #000; z-index: 10 !important; }
+#joystick-handle { position: absolute; top: 25px; left: 25px; width: 30px; height: 30px; background: #ff0055; border-radius: 50%; box-shadow: 0 0 12px rgba(255,0,85,0.8); border: 1px solid #fff; }
+
+body.theme-blue #joystick-handle { background: #00bcd4; box-shadow: 0 0 12px rgba(0,188,212,0.8); }
+/* ==========================================================================
+   🌟 開場戰術黑幕 (Loading Screen)
+   ========================================================================== */
+#startup-screen {
+    position: fixed;
+    top: 0; left: 0; width: 100vw; height: 100vh;
+    background-color: #050505;
+    z-index: 99999; /* 蓋住所有東西 */
+    display: flex;
+    justify-content: center; align-items: center;
+    color: #fff; font-family: 'Courier New', monospace; text-align: center;
+    pointer-events: none; /* 讓滑鼠點擊可以直接穿透 */
+    transition: opacity 1.2s ease-in-out; /* 漸淡退場的動畫參數 */
+}
+
+#startup-text {
+    font-size: 28px; font-weight: bold; letter-spacing: 4px;
+    text-shadow: 0 0 10px rgba(255, 255, 255, 0.5);
+    animation: pulseText 1.5s infinite alternate;
+}
+
+@keyframes pulseText {
+    from { opacity: 0.5; }
+    to { opacity: 1; }
+}
+
+/* ==========================================================================
+   🎯 HUD 戰術鎖定系統 - 極簡靜態版 (無閃爍、無旋轉、無多餘外框)
+   ========================================================================== */
+
+#dynamic-hud {
+    position: fixed; top: 0; left: 0; pointer-events: auto;
+    cursor: crosshair; z-index: 8000; transform: translate(-50%, -50%); display: none;
+}
+
+/* 基礎容器 (去除固定邊框) */
+#hud-shape { 
+    position: absolute; top: -20px; left: -20px;
+    width: 40px; height: 40px; box-sizing: border-box;
+}
+
+/* 徹底清除所有偽元素 (殺死殘留的菱形或跳動方塊) */
+#hud-shape::before, #hud-shape::after { 
+    content: none !important; display: none !important; 
+}
+
+/* --- 3種絕對獨立的形狀 --- */
+
+/* 1. 射程外：單純方框 */
+.shape-square { 
+    border: 2px solid #00ff88; border-radius: 0; background: none; 
+}
+
+/* 2. 飛彈射程內：單純圓圈 */
+.shape-circle { 
+    border: 2px solid #00ff88; border-radius: 50%; background: none; 
+}
+
+/* 3. 機砲射程內：四條斜線 (無邊框) */
+.shape-gun { 
+    border: none !important; background: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Cpath d='M 6 6 L 15 15 M 34 6 L 25 15 M 6 34 L 15 25 M 34 34 L 25 25' stroke='%2300ff88' stroke-width='2.5' stroke-linecap='round'/%3E%3C/svg%3E");
+    background-size: 100% 100%;
+}
+
+/* --- 必中高亮狀態 (完全靜態) --- */
+.predicted-hit {
+    /* 讓方框/圓圈變成白色 */
+    border-color: #ffffff !important;
+    /* 讓 SVG 線條發出白光 */
+    filter: drop-shadow(0 0 6px #ffffff);
+}
+
+/* 數據標籤與重播標籤維持原樣 */
+#hud-data-tag {
+    position: absolute; left: 30px; top: -20px; color: #00ff88;
+    font-size: 11px; font-family: 'Courier New', monospace; font-weight: bold;
+    white-space: nowrap; text-shadow: 1px 1px 2px #000; pointer-events: none;
+}
+.replay-floating-tag {
+    position: fixed; top: 0; left: 0; color: #fff;
+    font-size: 11px; font-weight: bold; font-family: 'Courier New', monospace;
+    background: rgba(10, 10, 10, 0.85); border: 1px solid #444; padding: 3px 8px;
+    border-radius: 4px; pointer-events: none; z-index: 8500; display: none;
+    text-shadow: 1px 1px 2px #000; box-shadow: 0 2px 8px rgba(0,0,0,0.8);
+}
+#replay-tag-red { border-left: 3px solid #ff0055; }
+#replay-tag-blue { border-left: 3px solid #00bcd4; }
