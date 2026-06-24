@@ -149,7 +149,7 @@ function checkInit() {
             ['red', 'blue'].forEach(id => {
                 let t = teams[id]; 
                 
-                t.ap = 50;   
+                t.ap = 107;   
                 t.heat = 0;  
                 t.hp = 100;  
                 

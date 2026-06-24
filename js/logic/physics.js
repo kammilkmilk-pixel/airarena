@@ -1,5 +1,5 @@
 // ============================================================================
-// physics.js - 物理與推演大腦 (尋標器熱源感知升級版)
+// physics.js - 物理與推演大腦 (動態機動誘導阻力優化版)
 // ============================================================================
 
 function getQuatAt(t, quats) { 
@@ -22,7 +22,17 @@ function simulateFlight(teamObj, chain) {
         let dYaw = ((cmd.yaw || 0) * stats.turnLimit) / FRAMES; let dPitch = ((cmd.pitch || 0) * stats.turnLimit) / FRAMES; let dRoll = (cmd.roll || 0) / FRAMES;
         for (let i = 0; i < FRAMES; i++) {
             let forwardVector = new THREE.Vector3(0, 0, 1).applyQuaternion(simObj.quaternion);
-            activeAP = Math.max(-100, Math.min(MAX_AP, activeAP - ((Math.abs(dYaw*180/Math.PI)*FRAMES*1.4)+(Math.abs(dPitch*180/Math.PI)*FRAMES*0.4))/FRAMES - forwardVector.y * 35 / FRAMES));
+            
+            // 🌟 核心修正：動態調降機動時產生的「誘導阻力 (Induced Drag)」係數！
+            // Yaw 轉向阻力係數：由極苛刻的 1.4 降低為 0.6
+            // Pitch 爬升阻力係數：由 0.4 降低為 0.25
+            // 重力勢能轉換：重力影響係數由 35 降至 30 (爬升掉AP，俯衝加AP，完全符合能量守恆)
+            let yawDrag = Math.abs(dYaw * 180 / Math.PI) * FRAMES * 0.6;
+            let pitchDrag = Math.abs(dPitch * 180 / Math.PI) * FRAMES * 0.25;
+            let gravityDrag = forwardVector.y * 30;
+            
+            activeAP = Math.max(-100, Math.min(MAX_AP, activeAP - (yawDrag + pitchDrag) / FRAMES - gravityDrag / FRAMES));
+            
             simObj.rotateY(dYaw); simObj.rotateX(dPitch); simObj.rotateZ(dRoll); 
             let rawSpeed = (Math.max(5, activeAP + baseThrust) * 0.015) / FRAMES;
             let gravityPull = forwardVector.y * 0.022 / 3; let finalStepDistance = (rawSpeed * currentSpeedMult) - gravityPull;
@@ -32,7 +42,7 @@ function simulateFlight(teamObj, chain) {
     return { points, quats, finalAP: activeAP };
 }
 
-// 🌟 新增：光速座標插值函數 (直接取代耗能的 CatmullRomCurve3)
+// 🌟 新增：光速座標插值函數
 function getPosAt(t, points) {
     if (!points || points.length === 0) return new THREE.Vector3();
     if (points.length === 1) return points[0].clone();

@@ -15,9 +15,8 @@ controls.target.set(10, 25, -30); controls.update();
 
 scene.add(new THREE.AmbientLight(0xffffff, 0.9)); const dirLight = new THREE.DirectionalLight(0xffffff, 0.4); dirLight.position.set(10, 50, 10); scene.add(dirLight);
 
-const obstacles = []; const gridXZ = new THREE.GridHelper(100, 100, 0x333333, 0x222222); gridXZ.position.set(12, 0, 18); scene.add(gridXZ);
-function createBuilding(x, z, h) { const geo = new THREE.BoxGeometry(1, h, 1); const mat = new THREE.MeshStandardMaterial({ color: 0x222222, roughness: 0.8 }); const b = new THREE.Mesh(geo, mat); b.position.set(x + 0.5, h/2, z + 0.5); scene.add(b); obstacles.push(b); }
-createBuilding(5, 10, 4); createBuilding(15, 20, 6); createBuilding(8, 25, 5);
+// 🌟 核心修正：將 GridHelper 精確對齊至 (10, 0, 20) 中軸線，使雙方起始點完美貼合地圖南/北邊緣
+const obstacles = []; const gridXZ = new THREE.GridHelper(100, 100, 0x333333, 0x222222); gridXZ.position.set(10, 0, 20); scene.add(gridXZ);
 
 // ============================================================================
 // 💨 TexturePacker 序列圖通用管理員與池化材质
@@ -47,10 +46,10 @@ class SpriteManager {
 }
 
 // 實例化四種特效管理器
-const smokeManager = new SpriteManager(); smokeManager.init('smoke_flipbook.json', 'smoke_flipbook.png');
-const explosionManager = new SpriteManager(); explosionManager.init('explosion_flipbook.json', 'explosion_flipbook.png');
-const flashManager = new SpriteManager(); flashManager.init('flash_flipbook.json', 'flash_flipbook.png');
-const puffManager = new SpriteManager(); puffManager.init('puff_flipbook.json', 'puff_flipbook.png');
+const smokeManager = new SpriteManager();
+const explosionManager = new SpriteManager();
+const flashManager = new SpriteManager();
+const puffManager = new SpriteManager();
 
 const smokeColor = (CONFIG.visuals && CONFIG.visuals.smoke) ? CONFIG.visuals.smoke.color : 0x444444;
 const puffColor = (CONFIG.visuals && CONFIG.visuals.smoke) ? CONFIG.visuals.smoke.color * 2 : 0xdddddd; 
@@ -156,17 +155,15 @@ const sparkTexShared = genSparkTextureShared();
 
 const threatEnvGroup = new THREE.Group(); scene.add(threatEnvGroup);
 window.ghostWrapper = new THREE.Group(); window.ghostWrapper.visible = false; scene.add(window.ghostWrapper);
-const arrowShape = new THREE.Shape(); arrowShape.moveTo(0, 0.4); arrowShape.lineTo(0.25, -0.4); arrowShape.lineTo(0, -0.15); arrowShape.lineTo(-0.25, -0.4); arrowShape.moveTo(0, 0.4);
-const ghostTriangle = new THREE.Mesh(new THREE.ShapeGeometry(arrowShape), new THREE.MeshBasicMaterial({color: 0xffffff, transparent: true, opacity: 0.6, side: THREE.DoubleSide, depthWrite: false}));
-ghostTriangle.rotation.x = Math.PI / 2; ghostTriangle.position.set(0, -0.08, 0);
-const ringGeo = new THREE.RingGeometry(0.4, 0.45, 32);
-window.ghostRing = new THREE.Mesh(ringGeo, new THREE.MeshBasicMaterial({color: 0xffffff, transparent: true, opacity: 0.4, side: THREE.DoubleSide, depthWrite: false}));
+const ringGeo1 = new THREE.RingGeometry(0.4, 0.45, 32);
+window.ghostRing = new THREE.Mesh(ringGeo1, new THREE.MeshBasicMaterial({color: 0xffffff, transparent: true, opacity: 0.4, side: THREE.DoubleSide, depthWrite: false}));
 window.ghostRing.rotation.x = Math.PI / 2; window.ghostRing.position.y = -0.08;
 const ghostCanvas = document.createElement('canvas'); ghostCanvas.width = 128; ghostCanvas.height = 64;
 window.ghostCtx = ghostCanvas.getContext('2d'); window.ghostTex = new THREE.CanvasTexture(ghostCanvas);
 const ghostTextPlane = new THREE.Mesh(new THREE.PlaneGeometry(1.5, 0.75), new THREE.MeshBasicMaterial({map: window.ghostTex, transparent: true, side: THREE.DoubleSide, depthTest: false}));
 ghostTextPlane.position.set(0, 0.1, -0.5); ghostTextPlane.rotation.set(-Math.PI / 2, 0, Math.PI);
-window.ghostWrapper.add(window.ghostRing, ghostTriangle, ghostTextPlane);
+
+window.ghostWrapper.add(window.ghostRing, ghostTextPlane);
 
 const trackMaterialRed = new THREE.MeshBasicMaterial({ color: 0xff0055, transparent: true, opacity: 0.5, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false });
 const trackMaterialBlue = new THREE.MeshBasicMaterial({ color: 0x00bcd4, transparent: true, opacity: 0.5, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false });
@@ -177,8 +174,12 @@ const visualFlaresPool = [];
 const maxVisualBullets = 150; 
 const visualBullets = [];
 for (let i = 0; i < maxVisualBullets; i++) {
-    let pts = new Float32Array(6); let geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.BufferAttribute(pts, 3));
-    let mesh = new THREE.Line(geo, new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.9, linewidth: 2, blending: THREE.AdditiveBlending }));
+    let pts = new Float32Array(6); 
+    let cols = new Float32Array(6); 
+    let geo = new THREE.BufferGeometry(); 
+    geo.setAttribute('position', new THREE.BufferAttribute(pts, 3));
+    geo.setAttribute('color', new THREE.BufferAttribute(cols, 3)); 
+    let mesh = new THREE.Line(geo, new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.9, linewidth: 2, blending: THREE.AdditiveBlending }));
     mesh.visible = false; scene.add(mesh); visualBullets.push(mesh);
 }
 
@@ -239,20 +240,85 @@ function updateSpatialHelpers() {
 
 function drawTrajectoryLine(teamObj) {
     if (trajectoryMeshes[teamObj.id]) { scene.remove(trajectoryMeshes[teamObj.id]); trajectoryMeshes[teamObj.id] = null; }
-    if (teamObj.pathPoints.length < 2) { window.ghostWrapper.visible = false; return; }
+    if (teamObj.pathPoints.length < 2) { if (teamObj.id === tAct) window.ghostWrapper.visible = false; return; }
     let pathLen = 0; 
     for(let i=0; i<teamObj.pathPoints.length-1; i++) pathLen += teamObj.pathPoints[i].distanceTo(teamObj.pathPoints[i+1]);
     teamObj.flightLength = pathLen;
     const vis = CONFIG.aircrafts['mig21'].visuals; const vertexArray = []; const leftPts = []; const rightPts = []; const steps = teamObj.pathPoints.length * 2;
-    for (let i = 0; i <= steps; i++) { let t = i / steps; let pos = getPosAt(t, teamObj.pathPoints); let q = getQuatAt(t, teamObj.pathQuats); let wingDir = new THREE.Vector3(1, 0, 0).applyQuaternion(q).normalize(); let centerPos = pos.clone().add(new THREE.Vector3(0, vis.engineOffsetY, vis.tailOffsetZ).applyQuaternion(q)); leftPts.push(centerPos.clone().add(wingDir.clone().multiplyScalar(vis.ribbonWidth / 2))); rightPts.push(centerPos.clone().sub(wingDir.clone().multiplyScalar(vis.ribbonWidth / 2))); }
+    for (let i = 0; i <= steps; i++) { 
+        let t = i / steps; 
+        let pos = getPosAt(t, teamObj.pathPoints); 
+        let q = getQuatAt(t, teamObj.pathQuats); 
+        let wingDir = new THREE.Vector3(1, 0, 0).applyQuaternion(q).normalize(); 
+        
+        let ribbonYOffset = vis.engineOffsetY; 
+        let centerPos = pos.clone().add(new THREE.Vector3(0, ribbonYOffset, 0).applyQuaternion(q)); 
+        
+        leftPts.push(centerPos.clone().add(wingDir.clone().multiplyScalar(vis.ribbonWidth / 2))); 
+        rightPts.push(centerPos.clone().sub(wingDir.clone().multiplyScalar(vis.ribbonWidth / 2))); 
+    }
     for (let i = 0; i < steps; i++) { vertexArray.push(leftPts[i].x, leftPts[i].y, leftPts[i].z, rightPts[i].x, rightPts[i].y, rightPts[i].z, leftPts[i+1].x, leftPts[i+1].y, leftPts[i+1].z); vertexArray.push(rightPts[i].x, rightPts[i].y, rightPts[i].z, rightPts[i+1].x, rightPts[i+1].y, rightPts[i+1].z, leftPts[i+1].x, leftPts[i+1].y, leftPts[i+1].z); }
     const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.Float32BufferAttribute(vertexArray, 3)); geo.computeVertexNormals();
     trajectoryMeshes[teamObj.id] = new THREE.Mesh(geo, teamObj.id === 'red' ? trackMaterialRed : trackMaterialBlue); scene.add(trajectoryMeshes[teamObj.id]);
     
-    if (!isAnimating && !window.replayMode) {
-        window.ghostWrapper.visible = true; window.ghostWrapper.position.copy(teamObj.pathPoints[teamObj.pathPoints.length - 1]); window.ghostWrapper.quaternion.copy(teamObj.pathQuats[teamObj.pathQuats.length - 1]);
-        window.ghostCtx.clearRect(0,0,128,64); window.ghostCtx.shadowColor = 'rgba(0,0,0,0.9)'; window.ghostCtx.shadowOffsetX = 2; window.ghostCtx.shadowOffsetY = 2; window.ghostCtx.shadowBlur = 4; window.ghostCtx.fillStyle = '#ffeb3b'; window.ghostCtx.font = 'bold 30px Courier New'; window.ghostCtx.textAlign = 'center'; window.ghostCtx.textBaseline = 'middle'; window.ghostCtx.fillText(teamObj.flightLength.toFixed(1) + 'm', 64, 32); window.ghostTex.needsUpdate = true;
-    } else { window.ghostWrapper.visible = false; }
+    if (!isAnimating && !window.replayMode && teamObj.id === tAct && !teamObj.isDestroyed) {
+        window.ghostWrapper.visible = true;
+        window.ghostWrapper.position.copy(teamObj.pathPoints[teamObj.pathPoints.length - 1]);
+        window.ghostWrapper.quaternion.copy(teamObj.pathQuats[teamObj.pathQuats.length - 1]);
+        
+        if (window.ghostPlaneMesh) {
+            window.ghostWrapper.remove(window.ghostPlaneMesh);
+        }
+
+        if (teamObj.wrapper) {
+            if (teamObj.wrapper.userData.exhaust && teamObj.wrapper.userData.exhaust.group) {
+                teamObj.wrapper.userData.exhaust.group.traverse(node => {
+                    node.userData.isExhaustComponent = true;
+                });
+            }
+
+            window.ghostPlaneMesh = teamObj.wrapper.clone();
+            window.ghostPlaneMesh.position.set(0, 0, 0);
+            window.ghostPlaneMesh.quaternion.set(0, 0, 0, 1);
+            
+            let teamColor = teamObj.id === 'red' ? 0xff0055 : 0x00bcd4;
+            let ghostMat = new THREE.MeshBasicMaterial({
+                color: teamColor,
+                transparent: true,
+                opacity: 0.35,              
+                side: THREE.DoubleSide,
+                depthWrite: false
+            });
+
+            window.ghostPlaneMesh.traverse(c => {
+                let isExhaust = c.userData.isExhaustComponent || 
+                                (c.name && c.name.toLowerCase().includes('exhaust')) || 
+                                (c.parent && c.parent.name && c.parent.name.toLowerCase().includes('exhaust')) ||
+                                c.name === 'flyingGlowMesh';
+
+                if (isExhaust) {
+                    c.visible = false; 
+                } 
+                else if (c.isMesh) {
+                    c.material = ghostMat;
+                    c.visible = true;
+                }
+            });
+
+            window.ghostWrapper.add(window.ghostPlaneMesh);
+        }
+
+        let teamColor = teamObj.id === 'red' ? 0xff0055 : 0x00bcd4;
+        if (window.ghostRing) window.ghostRing.material.color.setHex(teamColor);
+
+        window.ghostCtx.clearRect(0,0,128,64); 
+        window.ghostCtx.shadowColor = 'rgba(0,0,0,0.9)'; window.ghostCtx.shadowOffsetX = 2; window.ghostCtx.shadowOffsetY = 2; window.ghostCtx.shadowBlur = 4; 
+        window.ghostCtx.fillStyle = '#ffeb3b'; window.ghostCtx.font = 'bold 30px Courier New'; window.ghostCtx.textAlign = 'center'; window.ghostCtx.textBaseline = 'middle'; 
+        window.ghostCtx.fillText(teamObj.flightLength.toFixed(1) + 'm', 64, 32); 
+        window.ghostTex.needsUpdate = true;
+    } else if (teamObj.id === tAct) { 
+        window.ghostWrapper.visible = false; 
+    }
 }
 
 function updateGunPreview(teamObj) {
@@ -264,8 +330,23 @@ function updateGunPreview(teamObj) {
         let stats = CONFIG.aircrafts[teamObj.type || 'mig21'].throttleStats[teamObj.throttle] || { gunRangeMult: 1.0 };
         let dRange = GUN_RANGE * stats.gunRangeMult; let posArr = teamObj.userData.gunPreview.geometry.attributes.position.array; let ptIdx = 0; let T_now = 1.0; 
         for (let i = 0; i <= 30; i++) {
-            let t_spawn = (i / 30) * 0.95; let sPos = getPosAt(t_spawn, teamObj.pathPoints); let sQuat = getQuatAt(t_spawn, teamObj.pathQuats); let nPos = sPos.clone().add(new THREE.Vector3(0, -0.2, 4.0).applyQuaternion(sQuat)); let fwd = new THREE.Vector3(0, 0, 1).applyQuaternion(sQuat);
-            let dt = Math.max(0, T_now - t_spawn); let travelDist = dt * dRange * 2.0; let pt = nPos.clone().add(fwd.multiplyScalar(travelDist)); pt.y -= 0.5 * 9.8 * (dt * 2) * (dt * 2) * 0.5; 
+            let t_spawn = (i / 30) * 1.0; 
+            let sPos = getPosAt(t_spawn, teamObj.pathPoints); 
+            let sQuat = getQuatAt(t_spawn, teamObj.pathQuats); 
+            
+            let nPos = sPos.clone().add(new THREE.Vector3(0, -0.2, 0.5).applyQuaternion(sQuat)); 
+            
+            let el = CONFIG.weapons['gun'].elevation || 0;
+            let fwd = new THREE.Vector3(0, Math.sin(el), Math.cos(el)).applyQuaternion(sQuat).normalize();
+            
+            let dt = Math.max(0, T_now - t_spawn); 
+            let muzzleSpeed = dRange * 2.0; 
+            let travelDist = muzzleSpeed * dt; 
+            let pt = nPos.clone().add(fwd.multiplyScalar(travelDist)); 
+            
+            let gunGravMult = CONFIG.weapons['gun'].gravityMult !== undefined ? CONFIG.weapons['gun'].gravityMult : 1.0;
+            pt.y -= 0.5 * (CONFIG.rules.gravity * gunGravMult) * (dt * dt);
+            
             posArr[ptIdx*3] = pt.x; posArr[ptIdx*3+1] = pt.y; posArr[ptIdx*3+2] = pt.z; ptIdx++;
         }
         teamObj.userData.gunPreview.geometry.setDrawRange(0, ptIdx); teamObj.userData.gunPreview.geometry.attributes.position.needsUpdate = true; teamObj.userData.gunPreview.visible = true;
@@ -319,17 +400,14 @@ function renderCombatFrame(currentLog, animProgress) {
 
     explosionPool.forEach(p => p.visible = false); flashPool.forEach(p => p.visible = false); puffPool.forEach(p => p.visible = false);
 
-    // 🟢 1. 蒐集這回合 + 上一回合殘留的所有特效，確保跨回合平滑過渡
     let vfxToRender = [];
     
-    // 當前回合的特效
     if (currentLog.vfxTriggers) {
         currentLog.vfxTriggers.forEach(t => {
             vfxToRender.push({ trigger: t, ageFrames: trackIdx - t.step });
         });
     }
     
-    // 上一回合結尾殘留的特效 (壽命尚未結束的)
     if (turnIdx > 0 && battleLog[turnIdx - 1] && battleLog[turnIdx - 1].vfxTriggers) {
         battleLog[turnIdx - 1].vfxTriggers.forEach(t => {
             let pastAge = (100 - t.step) + trackIdx;
@@ -398,10 +476,9 @@ function renderCombatFrame(currentLog, animProgress) {
             });
         }
         
-        // 🟢 讀取精確 HP，處理變暗與引擎熄火
         let hpNow = currentLog.hpTrack ? currentLog.hpTrack[id][trackIdx] : t.hp;
         let isDead = hpNow <= 0;
-        let targetColorMultiplier = isDead ? 0.15 : 1.0; // 0.15 變焦黑
+        let targetColorMultiplier = isDead ? 0.15 : 1.0; 
         
         if (t.wrapper && t.wrapper.userData.isDeadState !== isDead) {
             t.wrapper.traverse(c => {
@@ -414,7 +491,6 @@ function renderCombatFrame(currentLog, animProgress) {
             });
             t.wrapper.userData.isDeadState = isDead;
             
-            // 💀 擊毀瞬間隱藏引擎尾焰
             if (t.wrapper.userData.exhaust) {
                 t.wrapper.userData.exhaust.group.visible = !isDead;
             }
@@ -428,29 +504,79 @@ function renderCombatFrame(currentLog, animProgress) {
         }
 
         if (t.userData && t.userData.gunPreview) t.userData.gunPreview.visible = false;
-        let currentNosePos = currentPlanePos.clone().add(new THREE.Vector3(0, -0.2, 4.0).applyQuaternion(currentPlaneQuat));
-
+        let currentNosePos = currentPlanePos.clone().add(new THREE.Vector3(0, -0.2, 1.5).applyQuaternion(currentPlaneQuat));
+        
         for (let age = 0; age <= 2; age++) {
             let logIdx = turnIdx - age; if (logIdx < 0) continue; let pastLog = battleLog[logIdx]; if (!pastLog) continue;
             let logChain = pastLog[id].chain;
             if (logChain && logChain.length > 0 && logChain[0].fire === 'gun' && pastLog[id].pts.length >= 2) {
-                let stats = CONFIG.aircrafts[t.type || 'mig21'].throttleStats[logChain[0].throttle || 2] || { gunRangeMult: 1.0 }; let dRange = GUN_RANGE * stats.gunRangeMult;
+                let stats = CONFIG.aircrafts[t.type || 'mig21'].throttleStats[logChain[0].throttle || 2] || { gunRangeMult: 1.0 }; 
+                let dRange = GUN_RANGE * stats.gunRangeMult;
+                
                 for (let b = 0; b < 24; b++) {
                     if (bulletIdx >= visualBullets.length) break;
-                    let mesh = visualBullets[bulletIdx]; let t_spawn = (b / 23) * 0.95; 
-                    let timeSinceSpawn = animProgress - t_spawn + age; if (timeSinceSpawn < 0 || timeSinceSpawn > 1.5) continue;
-                    let spawnPos = getPosAt(t_spawn, pastLog[id].pts); let spawnQuat = getQuatAt(t_spawn, pastLog[id].quats);
-                    let noseOffset = new THREE.Vector3(0, -0.2, 4.0).applyQuaternion(spawnQuat); let startPos = spawnPos.clone().add(noseOffset);
+                    let mesh = visualBullets[bulletIdx]; 
+                    let t_spawn = (b / 23) * 0.95; 
+                    let timeSinceSpawn = animProgress - t_spawn + age; 
+                    if (timeSinceSpawn < 0 || timeSinceSpawn > 1.5) continue;
+                    
+                    let spawnPos = getPosAt(t_spawn, pastLog[id].pts); 
+                    let spawnQuat = getQuatAt(t_spawn, pastLog[id].quats);
+                    
+                    let dt = 0.02; 
+                    let acVelocity;
+                    
+                    if (t_spawn >= dt) {
+                        let t_prev = t_spawn - dt;
+                        let prevPos = getPosAt(t_prev, pastLog[id].pts);
+                        acVelocity = new THREE.Vector3().subVectors(spawnPos, prevPos).divideScalar(dt);
+                    } else {
+                        let t_next = t_spawn + dt;
+                        let nextPos = getPosAt(t_next, pastLog[id].pts);
+                        acVelocity = new THREE.Vector3().subVectors(nextPos, spawnPos).divideScalar(dt);
+                    }
+
+                    let startPos = spawnPos.clone().add(new THREE.Vector3(0, -0.2, 1.5).applyQuaternion(spawnQuat));
                     let forward = new THREE.Vector3(0, 0, 1).applyQuaternion(spawnQuat);
+                    
                     let spreadX = Math.sin(b * 123.45 + logIdx) * 0.015; let spreadY = Math.cos(b * 678.90 + logIdx) * 0.015;
                     let right = new THREE.Vector3(1, 0, 0).applyQuaternion(spawnQuat); let up = new THREE.Vector3(0, 1, 0).applyQuaternion(spawnQuat);
                     forward.add(right.multiplyScalar(spreadX)).add(up.multiplyScalar(spreadY)).normalize();
-                    let travelDist = timeSinceSpawn * dRange * 2.0; let headPos = startPos.clone().add(forward.clone().multiplyScalar(travelDist));
-                    let gravDrop = 0.5 * 9.8 * (timeSinceSpawn * 2) * (timeSinceSpawn * 2) * 0.5; headPos.y -= gravDrop;
+                    
+                    let muzzleSpeed = dRange * 2.0; 
+                    let bulletVelocity = forward.clone().multiplyScalar(muzzleSpeed).add(acVelocity);
+
+                    let headPos = startPos.clone().add(bulletVelocity.clone().multiplyScalar(timeSinceSpawn));
+                    
+                    let gunGravMult = CONFIG.weapons['gun'].gravityMult !== undefined ? CONFIG.weapons['gun'].gravityMult : 1.0;
+                    let gravDrop = 0.5 * (CONFIG.rules.gravity * gunGravMult) * (timeSinceSpawn * timeSinceSpawn);
+                    headPos.y -= gravDrop;
+                    
                     let tracerLen = 4; let tailPos;
-                    if (age === 0 && travelDist < tracerLen) { tailPos = currentNosePos.clone(); } else { tailPos = headPos.clone().sub(forward.clone().multiplyScalar(tracerLen)); }
-                    mesh.geometry.attributes.position.setXYZ(0, headPos.x, headPos.y, headPos.z); mesh.geometry.attributes.position.setXYZ(1, tailPos.x, tailPos.y, tailPos.z); mesh.geometry.attributes.position.needsUpdate = true;
-                    mesh.material.color.setHex(id === 'red' ? 0xff5533 : 0x00e5ff); mesh.material.opacity = Math.max(0, 1.0 - (timeSinceSpawn / 1.5)); mesh.visible = true;
+                    if (age === 0 && (bulletVelocity.length() * timeSinceSpawn) < tracerLen) { 
+                        tailPos = currentNosePos.clone(); 
+                    } else { 
+                        let visualDir = bulletVelocity.clone().normalize();
+                        tailPos = headPos.clone().sub(visualDir.multiplyScalar(tracerLen)); 
+                    }
+                    
+                    mesh.geometry.attributes.position.setXYZ(0, headPos.x, headPos.y, headPos.z); 
+                    mesh.geometry.attributes.position.setXYZ(1, tailPos.x, tailPos.y, tailPos.z); 
+                    mesh.geometry.attributes.position.needsUpdate = true;
+
+                    let lifeRatio = Math.min(1.0, timeSinceSpawn / 1.5); 
+                    let colAttr = mesh.geometry.attributes.color;
+
+                    let curR = 1.0;
+                    let curG = 1.0 - (lifeRatio * 0.9); 
+                    let curB = 0.2 * (1.0 - lifeRatio); 
+
+                    colAttr.setXYZ(0, curR, curG, curB); 
+                    colAttr.setXYZ(1, curR * 0.8, curG * 0.8, curB * 0.8); 
+                    colAttr.needsUpdate = true;
+                    
+                    mesh.material.opacity = Math.max(0, 1.0 - (timeSinceSpawn / 1.5)); 
+                    mesh.visible = true;
                     bulletIdx++;
                 }
             }
@@ -462,8 +588,6 @@ function renderCombatFrame(currentLog, animProgress) {
                 let explodeFrame = currentLog[`${id}ExplodedAt`] ? currentLog[`${id}ExplodedAt`][p.id] : undefined;
                 
                 const masterMissileOffset = typeof window.mslVisOffset !== 'undefined' ? window.mslVisOffset : new THREE.Vector3(0.0, 0.0, 0.0);
-                
-                // 🟢 完美記住調整後的對齊數字 (Y為 -0.51)
                 const nozzleOffset = new THREE.Vector3(0.0, -0.51, -0.0);
                 
                 if (p.flyingMesh && !p.flyingMesh.isAAA_V3) {
@@ -491,7 +615,6 @@ function renderCombatFrame(currentLog, animProgress) {
                         let inner1 = new THREE.Mesh(fInnerGeo, fInnerMat); let inner2 = new THREE.Mesh(fInnerGeo, fInnerMat); inner2.rotateZ(Math.PI / 2);
                         
                         let fHaloMat = new THREE.MeshBasicMaterial({ map: sparkTexShared, color: 0xff8800, transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide });
-                        // 🟢 徹底修正：補上 THREE. 命名空間，解決當機問題！
                         let fHalo = new THREE.Mesh(new THREE.PlaneGeometry(0.8, 0.8), fHaloMat); fHalo.name = 'halo';
                         
                         fGlowGroup.add(outer1, outer2, inner1, inner2, fHalo);
@@ -508,7 +631,6 @@ function renderCombatFrame(currentLog, animProgress) {
                             let offset = masterMissileOffset.clone().applyQuaternion(mTrack.quat);
                             p.flyingMesh.position.copy(mTrack.pos).add(offset);
                             p.flyingMesh.quaternion.copy(mTrack.quat); 
-                            
                             p.flyingMesh.visible = true; 
                             
                             if (p.flyingGlowMesh) {
@@ -526,7 +648,6 @@ function renderCombatFrame(currentLog, animProgress) {
                     }
                     
                     const maxPts = 65; 
-                    
                     if (p.trailMesh && !p.trailMesh.isAAA_V3) { scene.remove(p.trailMesh); p.trailMesh = null; }
                     
                     if (!p.trailMesh) {
@@ -544,25 +665,24 @@ function renderCombatFrame(currentLog, animProgress) {
                     let validPts = 0;
                     
                     for (let h = 0; h < maxPts; h++) {
-                        let pastStep = trackIdx - h; let histPos = null; let histQuat = null;
+                        let pastStep = trackIdx - h; let htmlPos = null; let histQuat = null;
                         if (pastStep >= 0) {
-                            if (mTracks[pastStep] && mTracks[pastStep].pos) { histPos = mTracks[pastStep].pos.clone(); histQuat = mTracks[pastStep].quat; }
+                            if (mTracks[pastStep] && mTracks[pastStep].pos) { htmlPos = mTracks[pastStep].pos.clone(); histQuat = mTracks[pastStep].quat; }
                         } else {
                             let prevTurnIdx = turnIdx - 1;
                             if (prevTurnIdx >= 0 && battleLog[prevTurnIdx] && battleLog[prevTurnIdx][`${id}MslTracks`] && battleLog[prevTurnIdx][`${id}MslTracks`][p.id]) {
                                 let prevTracks = battleLog[prevTurnIdx][`${id}MslTracks`][p.id]; let prevStep = 100 + pastStep; 
-                                if (prevStep >= 0 && prevTracks[prevStep] && prevTracks[prevStep].pos) { histPos = prevTracks[prevStep].pos.clone(); histQuat = prevTracks[prevStep].quat; }
+                                if (prevStep >= 0 && prevTracks[prevStep] && prevTracks[prevStep].pos) { htmlPos = prevTracks[prevStep].pos.clone(); histQuat = prevTracks[prevStep].quat; }
                             }
                         }
                         
-                        if (histPos && histQuat) {
+                        if (htmlPos && histQuat) {
                             let lifeRatio = h / maxPts; 
-                            
                             let offset = masterMissileOffset.clone().applyQuaternion(histQuat);
-                            histPos.add(offset);
+                            htmlPos.add(offset);
                             
                             let localNozzle = nozzleOffset.clone().applyQuaternion(histQuat);
-                            let nozzlePos = histPos.clone().add(localNozzle);
+                            let nozzlePos = htmlPos.clone().add(localNozzle);
                             
                             let width = 0.05 + (lifeRatio * 1.5); 
                             let toCam = new THREE.Vector3().subVectors(camera.position, nozzlePos).normalize();
@@ -592,3 +712,44 @@ function renderCombatFrame(currentLog, animProgress) {
 
     for (; bulletIdx < visualBullets.length; bulletIdx++) { visualBullets[bulletIdx].visible = false; }
 }
+
+// ============================================================================
+// 🌆 大樓實體生成引擎 (數據驅動加載器)
+// ============================================================================
+function initMapObstacles() {
+    if (!CONFIG.map || !CONFIG.map.buildings) return;
+
+    CONFIG.map.buildings.forEach(b => {
+        if (b.type === 'box') {
+            const width = b.w || 1;
+            const depth = b.d || 1;
+            const geo = new THREE.BoxGeometry(width, b.h, depth);
+            const mat = new THREE.MeshStandardMaterial({ 
+                color: b.color || 0x2c2c2c, 
+                roughness: 0.85,
+                metalness: 0.1
+            });
+            const mesh = new THREE.Mesh(geo, mat);
+            mesh.position.set(b.x + width/2, b.h/2, b.z + depth/2);
+            scene.add(mesh);
+            obstacles.push(mesh); 
+        } 
+        else if (b.type === 'model') {
+            if (typeof loader !== 'undefined' && b.modelPath) {
+                loader.load(b.modelPath, (gltf) => {
+                    const model = gltf.scene;
+                    model.position.set(b.x, 0, b.z); 
+                    let s = b.scale || 1.0;
+                    model.scale.set(s, s, s);
+                    scene.add(model);
+                    model.traverse(child => {
+                        if (child.isMesh) obstacles.push(child);
+                    });
+                });
+            }
+        }
+    });
+    console.log(`🌆 戰術地圖初始化完成：已部署 ${obstacles.length} 棟深炭灰摩天大樓。`);
+}
+
+initMapObstacles();
