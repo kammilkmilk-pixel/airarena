@@ -1,5 +1,5 @@
 // ============================================================================
-// globals.js - 全域變數、狀態儲存與參數橋樑
+// globals.js - 全域變數、狀態儲存與安全狀態機 (5檔相容版)
 // ============================================================================
 
 if (typeof THREE === 'undefined') throw new Error("Three.js is not loaded.");
@@ -38,9 +38,10 @@ let initialPositions = {
     blue: { pos: new THREE.Vector3(10, 25, 70), quat: new THREE.Quaternion().setFromEuler(new THREE.Euler(0, Math.PI, 0)) }
 };
 
+// 🌟 初始化結構：預設開局為常規軍規推力 120AP 與 4 檔油門
 let teams = {
-    red: { id: 'red', type: 'mig21', colorMain: '#ff0055', wrapper: null, hp: MAX_HP, isDestroyed: false, ap: CONFIG.aircrafts['mig21'].baseAp, heat: 0, throttle: 2, chain: [], stalled: false, gLimiterOn: true, weapon: 'gun', wpnQueued: false, flareAmmo: CONFIG.weapons['flare'].maxAmmo, flaresArmed: false, ready: false, pendingPitch: 0, pendingYaw: 0, pendingRoll: 0, pathPoints: [], pathQuats: [], flightCurve: null, pylons: null, activeMissiles: [] },
-    blue: { id: 'blue', type: 'mig21', colorMain: '#00bcd4', wrapper: null, hp: MAX_HP, isDestroyed: false, ap: CONFIG.aircrafts['mig21'].baseAp, heat: 0, throttle: 2, chain: [], stalled: false, gLimiterOn: true, weapon: 'gun', wpnQueued: false, flareAmmo: CONFIG.weapons['flare'].maxAmmo, flaresArmed: false, ready: false, pendingPitch: 0, pendingYaw: 0, pendingRoll: 0, pathPoints: [], pathQuats: [], flightCurve: null, pylons: null, activeMissiles: [] }
+    red: { id: 'red', type: 'mig21', colorMain: '#ff0055', wrapper: null, hp: MAX_HP, isDestroyed: false, ap: 120, speed: 120, heat: 0, flameout: false, throttle: 4, chain: [], stalled: false, gLimiterOn: true, weapon: 'gun', wpnQueued: false, flareAmmo: CONFIG.weapons['flare'].maxAmmo, flaresArmed: false, ready: false, pendingPitch: 0, pendingYaw: 0, pendingRoll: 0, pathPoints: [], pathQuats: [], flightCurve: null, pylons: null, activeMissiles: [] },
+    blue: { id: 'blue', type: 'mig21', colorMain: '#00bcd4', wrapper: null, hp: MAX_HP, isDestroyed: false, ap: 120, speed: 120, heat: 0, flameout: false, throttle: 4, chain: [], stalled: false, gLimiterOn: true, weapon: 'gun', wpnQueued: false, flareAmmo: CONFIG.weapons['flare'].maxAmmo, flaresArmed: false, ready: false, pendingPitch: 0, pendingYaw: 0, pendingRoll: 0, pathPoints: [], pathQuats: [], flightCurve: null, pylons: null, activeMissiles: [] }
 };
 
 let tAct = 'red'; 
@@ -54,7 +55,7 @@ let trajectoryMeshes = { red: null, blue: null };
 window.mslVisOffset = new THREE.Vector3(0.0, 0.0, 0.0);
 
 // ============================================================================
-// 👇 狀態機控制器 (State Machine) - 動態熱力與氣動動能終端趨向模型
+// 👇 狀態機控制器 (State Machine) - 5 檔散熱與過熱保護
 // ============================================================================
 window.StateMachine = {
     applyDamage: function(teamId, amount) {
@@ -69,37 +70,62 @@ window.StateMachine = {
         return t.isDestroyed;
     },
     
+    // 🌟 5 檔專屬引擎溫度與熄火保護管控 (Flameout System)
     updateHeat: function(teamId, delta) {
         let t = teams[teamId];
         let maxH = typeof MAX_HEAT !== 'undefined' ? MAX_HEAT : 100;
-        t.heat = Math.max(0, Math.min(maxH, (t.heat || 0) + delta));
+        let throttle = t.throttle || 4;
+
+        if (t.flameout === undefined) t.flameout = false;
+
+        if (t.flameout) {
+            // 熄火狀態：引擎強制關機冷卻，溫度急速下降
+            t.heat = Math.max(0, (t.heat || 0) - 15);
+            if (t.heat < 40) {
+                t.flameout = false; // 溫度降至安全線，引擎重新點火
+                console.log(`❄️ [系統提示] ${teamId.toUpperCase()} 引擎冷卻完成，重新點火！`);
+            }
+        } else {
+            if (delta !== undefined) {
+                // 100% 相容舊版或外部手動 delta
+                t.heat = Math.max(0, Math.min(maxH, (t.heat || 0) + delta));
+            } else {
+                // 5 檔自動熱力學演算法
+                if (throttle === 5) t.heat = (t.heat || 0) + 22;      // 5 檔 AB 廢熱極速累積
+                else if (throttle === 4) t.heat = Math.max(0, (t.heat || 0) - 2); // 4 檔 MIL 常規
+                else if (throttle === 3) t.heat = Math.max(0, (t.heat || 0) - 6); // 3 檔 ECO 微量冷卻
+                else if (throttle === 2) t.heat = Math.max(0, (t.heat || 0) - 12); // 2 檔 IDL 快速冷卻
+                else if (throttle === 1) t.heat = Math.max(0, (t.heat || 0) - 18); // 1 檔 BRK 狂暴冷卻
+            }
+
+            // 觸發熄火保護
+            if (t.heat >= maxH) {
+                t.flameout = true;
+                t.throttle = 2; // 節流閥強拉至怠速 (2檔)
+                console.log(`🔥 [警報] ${teamId.toUpperCase()} 引擎過熱 (FLAMEOUT)！強制關機保護！`);
+            }
+        }
     },
 
-    // 🌟 核心修正：拋棄街機式強行對半折抵，改用「熱力學空氣阻力與極速趨向模型」！
-    updateAP: function(teamId, rawAp, thrustBonus) {
+    // 🌟 100% 動力學空速同步與失速判定
+    updateAP: function(teamId, rawSpeed, thrustBonus) {
         let t = teams[teamId];
         let stallAP = CONFIG.rules.stallSpeedAP || 45; 
         let minH = CONFIG.rules.minFlightHeight || 0.5; 
         
-        // 1. 取得當前節流閥對應的「目標巡航動能 (Terminal Cruise AP)」
-        // 怠速(1) 趨近 80AP，常規軍規(2) 趨近 130AP，後燃器開火(3) 趨近 200AP
-        let throttle = t.throttle || 2;
-        let targetAP = throttle === 1 ? 80 : (throttle === 2 ? 130 : 200);
+        // 🛠️ 核心修復：將引擎推力轉換為 AP 恢復量！否則戰機只有阻力會無限掉速
+        let actualThrust = thrustBonus || 35; // 防呆預設值
+        let newAP = rawSpeed + (actualThrust * 0.25); 
+        newAP = Math.min(MAX_AP, newAP); // 確保不超過 300 上限
+
+        // 儲存空速與 AP 指針數據，完美實現跨回合慣性繼承
+        t.speed = newAP;
+        t.ap = Math.floor(newAP);
         
-        // 2. 物理插值：
-        // 若經過機動轉彎後 rawAp 低於巡航目標，發動機推力將協助你「提速恢復 40%」；
-        // 若經過高速俯衝 rawAp 高於巡航目標，空氣阻力會對超速動能進行「衰減扣除 25%」。
-        let finalAp = rawAp;
-        if (rawAp < targetAP) {
-            let recoveryRate = 0.40; 
-            finalAp = rawAp + (targetAP - rawAp) * recoveryRate;
-        } else {
-            let decayRate = 0.25; 
-            finalAp = rawAp - (rawAp - targetAP) * decayRate;
-        }
-        
-        t.ap = Math.floor(Math.max(0, finalAp));
         t.stalled = (t.ap < stallAP || t.wrapper.position.y < minH);
+        if (t.stalled) {
+            console.log(`⚠ [警報] ${teamId.toUpperCase()} 戰機空速不足 (${t.ap}m/s)，進入氣動失速！`);
+        }
     },
 
     resetTurnStatus: function(teamId) {

@@ -165,8 +165,8 @@ ghostTextPlane.position.set(0, 0.1, -0.5); ghostTextPlane.rotation.set(-Math.PI 
 
 window.ghostWrapper.add(window.ghostRing, ghostTextPlane);
 
-const trackMaterialRed = new THREE.MeshBasicMaterial({ color: 0xff0055, transparent: true, opacity: 0.5, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false });
-const trackMaterialBlue = new THREE.MeshBasicMaterial({ color: 0x00bcd4, transparent: true, opacity: 0.5, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false });
+const trackMaterialRed = new THREE.MeshBasicMaterial({ color: 0xff0055, transparent: true, opacity: 0.65, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false }); 
+const trackMaterialBlue = new THREE.MeshBasicMaterial({ color: 0x00bcd4, transparent: true, opacity: 0.65, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false });
 const flareGeo = new THREE.SphereGeometry(0.4, 8, 8); const expGeo = new THREE.SphereGeometry(1, 16, 16); const expMat = new THREE.MeshBasicMaterial({ color: 0xff4400, transparent: true, opacity: 1, blending: THREE.AdditiveBlending, depthWrite: false });
 const flareMats = [ new THREE.MeshBasicMaterial({ color: 0xffff00, transparent: true, opacity: 1, blending: THREE.AdditiveBlending, depthWrite: false }), new THREE.MeshBasicMaterial({ color: 0xff8800, transparent: true, opacity: 0.8, blending: THREE.AdditiveBlending, depthWrite: false }), new THREE.MeshBasicMaterial({ color: 0x664422, transparent: true, opacity: 0.5, depthWrite: false }) ];
 const visualFlaresPool = [];
@@ -241,26 +241,59 @@ function updateSpatialHelpers() {
 function drawTrajectoryLine(teamObj) {
     if (trajectoryMeshes[teamObj.id]) { scene.remove(trajectoryMeshes[teamObj.id]); trajectoryMeshes[teamObj.id] = null; }
     if (teamObj.pathPoints.length < 2) { if (teamObj.id === tAct) window.ghostWrapper.visible = false; return; }
+    
     let pathLen = 0; 
     for(let i=0; i<teamObj.pathPoints.length-1; i++) pathLen += teamObj.pathPoints[i].distanceTo(teamObj.pathPoints[i+1]);
     teamObj.flightLength = pathLen;
-    const vis = CONFIG.aircrafts['mig21'].visuals; const vertexArray = []; const leftPts = []; const rightPts = []; const steps = teamObj.pathPoints.length * 2;
+    
+    const vis = CONFIG.aircrafts['mig21'].visuals; 
+    const vertexArray = []; const leftPts = []; const rightPts = []; 
+    const steps = teamObj.pathPoints.length * 2;
+    
+    // 生成絲帶節點
     for (let i = 0; i <= steps; i++) { 
         let t = i / steps; 
         let pos = getPosAt(t, teamObj.pathPoints); 
         let q = getQuatAt(t, teamObj.pathQuats); 
         let wingDir = new THREE.Vector3(1, 0, 0).applyQuaternion(q).normalize(); 
-        
-        let ribbonYOffset = vis.engineOffsetY; 
-        let centerPos = pos.clone().add(new THREE.Vector3(0, ribbonYOffset, 0).applyQuaternion(q)); 
-        
+        let centerPos = pos.clone().add(new THREE.Vector3(0, vis.engineOffsetY, 0).applyQuaternion(q)); 
         leftPts.push(centerPos.clone().add(wingDir.clone().multiplyScalar(vis.ribbonWidth / 2))); 
         rightPts.push(centerPos.clone().sub(wingDir.clone().multiplyScalar(vis.ribbonWidth / 2))); 
     }
-    for (let i = 0; i < steps; i++) { vertexArray.push(leftPts[i].x, leftPts[i].y, leftPts[i].z, rightPts[i].x, rightPts[i].y, rightPts[i].z, leftPts[i+1].x, leftPts[i+1].y, leftPts[i+1].z); vertexArray.push(rightPts[i].x, rightPts[i].y, rightPts[i].z, rightPts[i+1].x, rightPts[i+1].y, rightPts[i+1].z, leftPts[i+1].x, leftPts[i+1].y, leftPts[i+1].z); }
-    const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.Float32BufferAttribute(vertexArray, 3)); geo.computeVertexNormals();
-    trajectoryMeshes[teamObj.id] = new THREE.Mesh(geo, teamObj.id === 'red' ? trackMaterialRed : trackMaterialBlue); scene.add(trajectoryMeshes[teamObj.id]);
     
+    // 縫合三角面
+    for (let i = 0; i < steps; i++) { 
+        vertexArray.push(leftPts[i].x, leftPts[i].y, leftPts[i].z, rightPts[i].x, rightPts[i].y, rightPts[i].z, leftPts[i+1].x, leftPts[i+1].y, leftPts[i+1].z); 
+        vertexArray.push(rightPts[i].x, rightPts[i].y, rightPts[i].z, rightPts[i+1].x, rightPts[i+1].y, rightPts[i+1].z, leftPts[i+1].x, leftPts[i+1].y, leftPts[i+1].z); 
+    }
+    
+   
+    const geo = new THREE.BufferGeometry(); 
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(vertexArray, 3)); 
+    
+    // 🟢 刪除原本的 computeBoundingSphere(); 替換成以下這行！
+    // 這會賦予光帶一個無限大的邊界球，徹底免疫任何極端大角度機動造成的 WebGL 引擎誤判剔除！
+    geo.boundingSphere = new THREE.Sphere(new THREE.Vector3(0, 0, 0), 1000000); 
+    
+    trajectoryMeshes[teamObj.id] = new THREE.Mesh(geo, teamObj.id === 'red' ? trackMaterialRed : trackMaterialBlue); 
+    trajectoryMeshes[teamObj.id].frustumCulled = false;
+    
+    scene.add(trajectoryMeshes[teamObj.id]);
+
+    // 🟢 嚴格遵守 HUD 的包絡線點擊開關
+    if (trajectoryMeshes[teamObj.id]) {
+        // 如果是自己，永遠顯示；如果是敵人，必須根據 showEnvelope 決定
+        let currentTeam = typeof tAct !== 'undefined' ? tAct : window.activeTeamId;
+        if (teamObj.id === currentTeam) {
+            trajectoryMeshes[teamObj.id].visible = true;
+        } else {
+            // 這是關鍵：讀取敵機的 userData 狀態
+            trajectoryMeshes[teamObj.id].visible = !!(teamObj.userData && teamObj.userData.showEnvelope);
+        }
+    }
+    
+    // ============================================
+    // 👇 下方保留你原本的 Ghost Plane (幽靈戰機) 邏輯
     if (!isAnimating && !window.replayMode && teamObj.id === tAct && !teamObj.isDestroyed) {
         window.ghostWrapper.visible = true;
         window.ghostWrapper.position.copy(teamObj.pathPoints[teamObj.pathPoints.length - 1]);
@@ -714,42 +747,85 @@ function renderCombatFrame(currentLog, animProgress) {
 }
 
 // ============================================================================
-// 🌆 大樓實體生成引擎 (數據驅動加載器)
+// 🏙️ 3D 城市地圖加載引擎 (完美保留模型原色 / 淺灰軍規切換完全體)
 // ============================================================================
-function initMapObstacles() {
-    if (!CONFIG.map || !CONFIG.map.buildings) return;
+function initCityMapModel() {
+    if (typeof obstacles === 'undefined') window.obstacles = [];
 
-    CONFIG.map.buildings.forEach(b => {
-        if (b.type === 'box') {
-            const width = b.w || 1;
-            const depth = b.d || 1;
-            const geo = new THREE.BoxGeometry(width, b.h, depth);
-            const mat = new THREE.MeshStandardMaterial({ 
-                color: b.color || 0x2c2c2c, 
-                roughness: 0.85,
+    const gltfLoader = new THREE.GLTFLoader();
+    console.log("⏳ 開始加載城市模型 (assets/models/city.glb)...");
+
+    gltfLoader.load(
+        'assets/models/city.glb', 
+        function (gltf) {
+            const cityModel = gltf.scene;
+            cityModel.name = "TACTICAL_CITY_MESH";
+
+            // 🟢 控制開關：如果你想放棄模型原色，全部強制換成「軍規淺灰色」，請把 false 改成 true
+            const FORCE_LIGHT_GRAY = false; 
+
+            // 註冊 CSS 全域幾何變數大腦
+            document.documentElement.style.setProperty('--city-scale', '1.0');
+            document.documentElement.style.setProperty('--city-x', '0');
+            document.documentElement.style.setProperty('--city-z', '0');
+            document.documentElement.style.setProperty('--city-y', '0');
+
+            // 即時變數連動公式
+            window.updateCityGeometry = function() {
+                const s = parseFloat(document.documentElement.style.getPropertyValue('--city-scale') || 1.0);
+                const x = parseFloat(document.documentElement.style.getPropertyValue('--city-x') || 0);
+                const y = parseFloat(document.documentElement.style.getPropertyValue('--city-y') || 0);
+                const z = parseFloat(document.documentElement.style.getPropertyValue('--city-z') || 0);
+                
+                cityModel.scale.set(0.15, 0.15, 0.15);
+                cityModel.position.set(9.5, 0, 20);
+            };
+
+            window.updateCityGeometry();
+
+            // 建立淺灰色材質備用
+            const lightGrayMaterial = new THREE.MeshStandardMaterial({
+                color: 0xcccccc,      // 淺灰色
+                roughness: 0.6,       // 霧面質感
                 metalness: 0.1
             });
-            const mesh = new THREE.Mesh(geo, mat);
-            mesh.position.set(b.x + width/2, b.h/2, b.z + depth/2);
-            scene.add(mesh);
-            obstacles.push(mesh); 
-        } 
-        else if (b.type === 'model') {
-            if (typeof loader !== 'undefined' && b.modelPath) {
-                loader.load(b.modelPath, (gltf) => {
-                    const model = gltf.scene;
-                    model.position.set(b.x, 0, b.z); 
-                    let s = b.scale || 1.0;
-                    model.scale.set(s, s, s);
-                    scene.add(model);
-                    model.traverse(child => {
-                        if (child.isMesh) obstacles.push(child);
-                    });
-                });
-            }
+
+            // 遍歷 3D 城市模型的每一個子網格
+            cityModel.traverse(function (child) {
+                if (child.isMesh) {
+                    child.castShadow = true;
+                    child.receiveShadow = true;
+                    
+                    if (FORCE_LIGHT_GRAY) {
+                        // 🧱 方案 A：強制換成高質感淺灰色
+                        child.material = lightGrayMaterial;
+                    } else {
+                        // 🎨 方案 B：完美保留原本模型的顏色與貼圖
+                        // 確保雙面材質可見，並允許 Three.js 正確解析原廠貼圖顏色
+                        if (child.material) {
+                            child.material.side = THREE.DoubleSide;
+                            if (child.material.map) {
+                                child.material.map.encoding = THREE.sRGBEncoding; // 讓色彩更飽和真實
+                            }
+                        }
+                    }
+                    
+                    // 塞入火控碰撞矩陣，保證機砲與飛彈會打中它並爆出火花
+                    obstacles.push(child); 
+                }
+            });
+
+            scene.add(cityModel);
+            console.log(`🏙️ [加載成功] 城市模型部署完畢。已將 ${obstacles.length} 個建築網格注入戰術碰撞矩陣。`);
+        },
+        function (xhr) {
+            if (xhr.total > 0) console.log(`⏳ 城市下載進度: ${(xhr.loaded / xhr.total * 100).toFixed(1)}%`);
+        },
+        function (error) {
+            console.error('❌ 載入 assets/models/city.glb 失敗！請務必檢查路徑與大小寫：', error);
         }
-    });
-    console.log(`🌆 戰術地圖初始化完成：已部署 ${obstacles.length} 棟深炭灰摩天大樓。`);
+    );
 }
 
-initMapObstacles();
+// 啟動城市地圖
+initCityMapModel();

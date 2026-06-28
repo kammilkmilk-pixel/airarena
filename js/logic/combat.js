@@ -1,5 +1,5 @@
 // ============================================================================
-// combat.js - 回合結算與狀態機 (碰撞損壞物理引擎大一統完全體)
+// combat.js - 回合結算與狀態機 (終極修復包絡線實體生成版)
 // ============================================================================
 
 // ----------------------------------------------------------------------------
@@ -52,7 +52,10 @@ function processFlightPaths(ctx) {
         if (t.chain && t.chain.length > 0) t.chain[0].resultingAP = res.finalAP; 
 
         if (typeof drawTrajectoryLine === 'function') drawTrajectoryLine(t);
-        if (trajectoryMeshes[id]) trajectoryMeshes[id].visible = false; 
+        if (trajectoryMeshes[id]) {
+            let isCurrentPlayer = (typeof tAct !== 'undefined' && id === tAct) || (id === window.tAct);
+            trajectoryMeshes[id].visible = isCurrentPlayer ? true : !!(t.userData && t.userData.showEnvelope);
+        }
 
         t.flightCurve = new THREE.CatmullRomCurve3(t.pathPoints, false, 'catmullrom', 0);
         ctx.log[id] = { pts: [...t.pathPoints], quats: [...t.pathQuats], chain: [...t.chain], wasFlaresArmed: t.wasFlaresArmedThisTurn, damageTaken: 0 };
@@ -128,6 +131,7 @@ function resolveGunsForStep(step, ratio, ctx) {
             let el = CONFIG.weapons['gun'].elevation || 0;
             let fwd = new THREE.Vector3(0, Math.sin(el), Math.cos(el)).applyQuaternion(q1).normalize();
 
+            // 生成砲口火光
             if (step % 2 === 0) {
                 let gunPorts = CONFIG.aircrafts[t.type || 'mig21'].guns || [{ id: 1, position: [0, -0.05, 1.2] }];
                 gunPorts.forEach(gun => {
@@ -140,6 +144,31 @@ function resolveGunsForStep(step, ratio, ctx) {
                 });
             }
             
+            // Raycaster 機砲射線掃描城市模型
+            let gunMuzzlePos = p1.clone().add(new THREE.Vector3(0, -0.12, 0.45).applyQuaternion(q1));
+            let isGunBlockedByBuilding = false;
+            let blockPoint = new THREE.Vector3();
+            let distToBlock = 99999;
+
+            if (typeof obstacles !== 'undefined' && obstacles.length > 0) {
+                let raycaster = new THREE.Raycaster(gunMuzzlePos, fwd);
+                let hits = raycaster.intersectObjects(obstacles, false); 
+                if (hits.length > 0) {
+                    isGunBlockedByBuilding = true;
+                    distToBlock = hits[0].distance;
+                    blockPoint.copy(hits[0].point);
+                }
+            }
+
+            // 機砲打中大廈牆面的火花特效
+            if (isGunBlockedByBuilding && distToBlock <= dRange) {
+                if (step % 4 === 0) {
+                    ctx.log.vfxTriggers.push({ type: 'puff', step: step, pos: blockPoint, rot: Math.random()*Math.PI*2, scale: 0.6, opacity: 0.5 });
+                    ctx.log.vfxTriggers.push({ type: 'spark_explosion', step: step, pos: blockPoint, velocities: genSparks(6, 0.3), wind: new THREE.Vector3() });
+                }
+            }
+
+            // 判斷是否打中敵機
             let vecToEnemy = new THREE.Vector3().subVectors(p2, p1);
             let forwardDist = vecToEnemy.dot(fwd);
 
@@ -152,14 +181,17 @@ function resolveGunsForStep(step, ratio, ctx) {
                 expectedBulletPos.y -= 0.5 * (CONFIG.rules.gravity * gunGravMult) * (timeSinceSpawn * timeSinceSpawn); 
                 
                 if (expectedBulletPos.distanceTo(p2) <= forwardDist * Math.tan(dAngle)) {
-                    ctx.hp[enemy.id] -= (GUN_DAMAGE / 100);
-                    ctx.log[enemy.id].damageTaken += (GUN_DAMAGE / 100);
-                    
-                    if (step % 3 === 0) {
-                        let hitPos = p2.clone().add(vecToEnemy.clone().normalize().multiplyScalar(-1.5)).add(new THREE.Vector3((Math.random()-0.5), (Math.random()-0.5), (Math.random()-0.5)));
-                        ctx.log.vfxTriggers.push({ type: 'spark_explosion', step: step, pos: hitPos, velocities: genSparks(12, 0.45), wind: fwd.clone().multiplyScalar(-0.005) });
-                        ctx.log.vfxTriggers.push({ type: 'flash', step: step, pos: hitPos, rot: Math.random()*Math.PI*2, scale: 0.8 });
-                        ctx.log.vfxTriggers.push({ type: 'puff', step: step, pos: hitPos, rot: Math.random()*Math.PI*2, scale: 0.8, opacity: 0.9, drift: fwd.clone().multiplyScalar(-0.02) });
+                    // 安全判定：只有敵機在障礙物前面才會扣血
+                    if (!isGunBlockedByBuilding || forwardDist < distToBlock) {
+                        ctx.hp[enemy.id] -= (GUN_DAMAGE / 100);
+                        ctx.log[enemy.id].damageTaken += (GUN_DAMAGE / 100);
+                        
+                        if (step % 3 === 0) {
+                            let hitPos = p2.clone().add(vecToEnemy.clone().normalize().multiplyScalar(-1.5)).add(new THREE.Vector3((Math.random()-0.5), (Math.random()-0.5), (Math.random()-0.5)));
+                            ctx.log.vfxTriggers.push({ type: 'spark_explosion', step: step, pos: hitPos, velocities: genSparks(12, 0.45), wind: fwd.clone().multiplyScalar(-0.005) });
+                            ctx.log.vfxTriggers.push({ type: 'flash', step: step, pos: hitPos, rot: Math.random()*Math.PI*2, scale: 0.8 });
+                            ctx.log.vfxTriggers.push({ type: 'puff', step: step, pos: hitPos, rot: Math.random()*Math.PI*2, scale: 0.8, opacity: 0.9, drift: fwd.clone().multiplyScalar(-0.02) });
+                        }
                     }
                 }
             }
@@ -189,24 +221,47 @@ function resolveMissilesForStep(step, ratio, ctx) {
                 }
             }
 
+            let oldPos = activeM.pos.clone();
             let targetPos = getPosAt(ratio, enemy.pathPoints); let targetQuat = getQuatAt(ratio, enemy.pathQuats);
             let stepRes = simulateMissileStep(activeM.pos, activeM.quat, targetPos, targetQuat, activeM.ap, t, enemy, cFlares, activeM);
+
+            let isMissileCrashedIntoBuilding = false;
+            if (typeof obstacles !== 'undefined' && obstacles.length > 0 && stepRes.pos) {
+                let moveVec = new THREE.Vector3().subVectors(stepRes.pos, oldPos);
+                let dist = moveVec.length();
+                if (dist > 0.0001) {
+                    let raycaster = new THREE.Raycaster(oldPos, moveVec.normalize());
+                    let hits = raycaster.intersectObjects(obstacles, false);
+                    if (hits.length > 0 && hits[0].distance <= dist) {
+                        isMissileCrashedIntoBuilding = true;
+                        stepRes.pos.copy(hits[0].point); 
+                    }
+                }
+            }    
+
             if (stepRes.pos) activeM.pos.copy(stepRes.pos); 
             if (stepRes.quat) activeM.quat.copy(stepRes.quat); 
             if (stepRes.ap !== undefined) activeM.ap = stepRes.ap;
+
+            if (isMissileCrashedIntoBuilding) {
+                stepRes.exploded = true;
+                activeM.ap = 0; 
+                console.log(`🚀💥 [武器事故] 飛彈在攔截途中撞擊城市建築物，發生劇烈殉爆！`);
+            }
+
             ctx.log[`${id}MslTracks`][activeM.pylonId].push({ pos: activeM.pos.clone(), quat: activeM.quat.clone() });
-            
+
             if (stepRes.exploded) { 
                 activeM.exploded = true; ctx.log[`${id}ExplodedAt`][activeM.pylonId] = step;
-                ctx.log[`${id}MslIsSelfDestruct`] = ctx.log[`${id}MslIsSelfDestruct`] || {}; ctx.log[`${id}MslIsSelfDestruct`][activeM.pylonId] = stepRes.selfDestructed;
+                ctx.log[`${id}MslIsSelfDestruct`] = ctx.log[`${id}MslIsSelfDestruct`] || {}; 
+                ctx.log[`${id}MslIsSelfDestruct`][activeM.pylonId] = stepRes.lostTarget || stepRes.selfDestructed; 
                 
                 let mFwd = new THREE.Vector3(0,0,1).applyQuaternion(activeM.quat);
                 ctx.log.vfxTriggers.push({ type: 'spark_explosion', step: step, pos: activeM.pos.clone(), velocities: genSparks(80, 0.8), wind: mFwd.clone().multiplyScalar(-0.005) });
                 ctx.log.vfxTriggers.push({ type: 'explosion', step: step, pos: activeM.pos.clone(), rot: Math.random() * Math.PI * 2, scale: 1.2 });
-                ctx.log.vfxTriggers.push({ type: 'puff', step: step, pos: activeM.pos.clone().add(new THREE.Vector3(0.5, 0.5, 0)), rot: Math.random() * Math.PI * 2, scale: 1.5, opacity: 0.9, drift: mFwd.clone().multiplyScalar(-0.02) });
                 ctx.log.vfxTriggers.push({ type: 'flash', step: step, pos: activeM.pos.clone(), rot: Math.random() * Math.PI * 2, scale: 1.5 });
 
-                if (activeM.pos.distanceTo(targetPos) <= ((CONFIG.weapons['fox2'] && CONFIG.weapons['fox2'].fuseRange) ? CONFIG.weapons['fox2'].fuseRange : 3.5) + 1.5) { 
+                if (!isMissileCrashedIntoBuilding && activeM.pos.distanceTo(targetPos) <= ((CONFIG.weapons['fox2'] && CONFIG.weapons['fox2'].fuseRange) ? CONFIG.weapons['fox2'].fuseRange : 3.5) + 1.5) { 
                     ctx.hp[enemy.id] -= MISSILE_DAMAGE; ctx.log[enemy.id].damageTaken += MISSILE_DAMAGE;
                 }
             }
@@ -214,19 +269,14 @@ function resolveMissilesForStep(step, ratio, ctx) {
     });
 }
 
-// 🌟 核心升級：空地一體動態碰撞檢測矩陣
 function resolveDamageAndDeathForStep(step, ratio, ctx) {
     let pRed = getPosAt(ratio, teams.red.pathPoints);
     let pBlue = getPosAt(ratio, teams.blue.pathPoints);
 
-    // 💥 1. 【空中碰撞】紅藍戰機 3D 包絡線迎頭咬合相撞判定
     if (!teams.red.isDestroyed && !teams.blue.isDestroyed && ctx.death.red === -1 && ctx.death.blue === -1) {
-        if (pRed.distanceTo(pBlue) < 1.8) { // 1.8 米翼展判定
-            ['red', 'blue'].forEach(id => {
-                ctx.hp[id] = 0; ctx.death[id] = step; ctx.log[id].damageTaken = 100;
-            });
+        if (pRed.distanceTo(pBlue) < 1.8) { 
+            ['red', 'blue'].forEach(id => { ctx.hp[id] = 0; ctx.death[id] = step; ctx.log[id].damageTaken = 100; });
             ctx.log.vfxTriggers.push({ type: 'explosion', step: step, pos: pRed.clone().add(pBlue).multiplyScalar(0.5), scale: 2.8, rot: Math.random() * Math.PI });
-            console.log("💥 [戰術事故] 警告：紅藍戰機發生空中直接迎頭撞擊！雙方瞬間粉碎解體！");
         }
     }
 
@@ -234,58 +284,48 @@ function resolveDamageAndDeathForStep(step, ratio, ctx) {
         let t = teams[id];
         if (t.isDestroyed) return;
 
+        let steps = CONFIG.rules.stepsPerTurn;
+        let prevRatio = Math.max(0, ratio - (1/steps));
+        let pPrev = getPosAt(prevRatio, t.pathPoints);
         let currentPos = getPosAt(ratio, t.pathPoints);
         let currentQuat = getQuatAt(ratio, t.pathQuats);
         
-        let hasCollided = false;
-        let collisionType = "";
+        let hasCollided = false; let collisionType = "";
 
-        // 💥 2. 【大廈碰撞】3D 空間 AABB 立體包絡線阻擋檢測
-        if (ctx.death[id] === -1 && CONFIG.map && CONFIG.map.buildings) {
-            for (let b of CONFIG.map.buildings) {
-                let w = b.w || 1; let d = b.d || 1;
-                // 精確比對戰機 X, Z 坐標是否落在大廈底座內，且高度 Y 低於大廈樓頂
-                if (currentPos.x >= b.x && currentPos.x <= (b.x + w) &&
-                    currentPos.z >= b.z && currentPos.z <= (b.z + d) &&
-                    currentPos.y >= 0 && currentPos.y <= b.h) {
-                    hasCollided = true; collisionType = "building"; break;
-                }
+        let moveVec = new THREE.Vector3().subVectors(currentPos, pPrev);
+        let dist = moveVec.length();
+
+        if (ctx.death[id] === -1 && typeof obstacles !== 'undefined' && obstacles.length > 0 && dist > 0.0001) {
+            let raycaster = new THREE.Raycaster(pPrev, moveVec.normalize());
+            let hits = raycaster.intersectObjects(obstacles, false);
+            if (hits.length > 0 && hits[0].distance <= dist) {
+                hasCollided = true; collisionType = "building";
+                currentPos.copy(hits[0].point);
             }
         }
 
-        // 💥 3. 【地面碰撞】低空掠地或高度歸零觸地解體判定
         let minH = CONFIG.rules.minFlightHeight || 0.5;
         if (ctx.death[id] === -1 && !hasCollided && currentPos.y <= minH + 0.15) {
             hasCollided = true; collisionType = "ground";
         }
 
-        // 💀 觸發碰撞懲罰：瞬間扣光血量，引爆連環殉爆，強行切換至尾旋墜落路徑
         if (hasCollided && ctx.death[id] === -1) {
             ctx.hp[id] = 0; ctx.death[id] = step; ctx.log[id].damageTaken = 100;
-            
-            // 爆發大型科技火球特效與高能火花
             ctx.log.vfxTriggers.push({ type: 'explosion', step: step, pos: currentPos.clone(), scale: 2.3, rot: Math.random()*Math.PI*2 });
             ctx.log.vfxTriggers.push({ type: 'spark_explosion', step: step, pos: currentPos.clone(), velocities: genSparks(60, 0.7), wind: new THREE.Vector3(0,0,0) });
             ctx.log.vfxTriggers.push({ type: 'flash', step: step, pos: currentPos.clone(), rot: Math.random()*Math.PI*2, scale: 1.5 });
-
-            if (collisionType === "building") {
-                console.log(`💥 [環境撞擊] ${id.toUpperCase()} 戰機未能規避淺灰色摩天大樓，直接攔腰撞進大廈解體！`);
-            } else if (collisionType === "ground") {
-                console.log(`💥 [環境撞擊] ${id.toUpperCase()} 戰機高度過低切入死亡界限，直接衝撞地面化為火球！`);
-            }
+            console.log(`💥 [撞擊事故] ${id.toUpperCase()} 戰機規避失敗，直接撞毀於 ${collisionType === 'building' ? '城市建築' : '地面'}！`);
         }
 
-        // 🌀 動態軌跡劫持：若戰機已處於死亡狀態 (不論是中彈還是碰撞)，強行將後面剩餘的航點扭曲成失速旋轉下墜軌跡
         if (ctx.death[id] === step || (ctx.death[id] !== -1 && step === ctx.death[id])) {
             let deathRatio = step / CONFIG.rules.stepsPerTurn;
-            let simPos = getPosAt(deathRatio, t.pathPoints);
-            let simQuat = getQuatAt(deathRatio, t.pathQuats);
+            let simPos = getPosAt(deathRatio, t.pathPoints); let simQuat = getQuatAt(deathRatio, t.pathQuats);
 
             for (let i = Math.max(0, Math.floor(deathRatio * (t.pathPoints.length - 1))) + 1; i < t.pathPoints.length; i++) {
-                simQuat.multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,0,1), 0.16)); // 劇烈滾轉
-                simQuat.multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1,0,0), -0.07)); // 抬頭低頭失速
+                simQuat.multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,0,1), 0.16)); 
+                simQuat.multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1,0,0), -0.07)); 
                 let fwd = new THREE.Vector3(0,0,1).applyQuaternion(simQuat);
-                simPos.add(fwd.multiplyScalar(0.28)); simPos.y -= 0.42; // 重力下墜
+                simPos.add(fwd.multiplyScalar(0.28)); simPos.y -= 0.42; 
                 if (simPos.y < minH) simPos.y = minH; 
                 
                 t.pathPoints[i] = simPos.clone(); t.pathQuats[i] = simQuat.clone();
@@ -295,7 +335,6 @@ function resolveDamageAndDeathForStep(step, ratio, ctx) {
         
         ctx.log.hpTrack[id][step] = Math.max(0, ctx.hp[id]);
 
-        // 殘骸冒煙與燃燒碎片生成
         if (ctx.death[id] !== -1 && step >= ctx.death[id]) {
             let deadPos = getPosAt(ratio, t.pathPoints); let deadQuat = getQuatAt(ratio, t.pathQuats);
             let fwd = new THREE.Vector3(0,0,1).applyQuaternion(deadQuat);
@@ -344,10 +383,14 @@ function executeTurnSimultaneously() {
     }
 
     ['red', 'blue'].forEach(id => { 
+        let t = teams[id]; // ✅ 加上這行，徹底修復 t 未定義造成的執行崩潰
         if (teams[id].activeMissiles) teams[id].activeMissiles = teams[id].activeMissiles.filter(m => !m.exploded && m.ap > 0); 
         if (ctx.death[id] !== -1) {
-            if (typeof drawTrajectoryLine === 'function') drawTrajectoryLine(teams[id]);
-            if (trajectoryMeshes[id]) trajectoryMeshes[id].visible = false;
+            if (typeof drawTrajectoryLine === 'function') drawTrajectoryLine(t);
+            if (trajectoryMeshes[id]) {
+                let isCurrentPlayer = (typeof tAct !== 'undefined' && id === tAct) || (id === window.tAct);
+                trajectoryMeshes[id].visible = isCurrentPlayer ? true : !!(t.userData && t.userData.showEnvelope);
+            }
         }
     });
     
@@ -386,11 +429,21 @@ function finishTurnSimultaneously() {
             let freshRes = simulateFlight(t, t.chain); t.pathPoints = freshRes.points; t.pathQuats = freshRes.quats;
             StateMachine.resetTurnStatus(id);
 
+            // 1. 先處理舊回合的殘影
             if (trajectoryMeshes[id]) { 
-                trajectoryMeshes[id].visible = true; trajectoryMeshes[id].material = trajectoryMeshes[id].material.clone(); 
+                trajectoryMeshes[id].material = trajectoryMeshes[id].material.clone();
                 pastTrajectories.push(trajectoryMeshes[id]); if (pastTrajectories.length > 4) scene.remove(pastTrajectories.shift()); 
                 pastTrajectories.forEach((mesh, idx) => { mesh.material.opacity = (pastTrajectories.length - 1 - idx) <= 1 ? 0.35 : 0.12; }); 
                 trajectoryMeshes[id] = null; 
+            }
+
+            // 2. 🟢 救命神藥：確保新回合一開始，立刻為敵方建立未來網格，否則 HUD 將無實體可操作！
+            if (typeof drawTrajectoryLine === 'function') {
+                drawTrajectoryLine(t);
+                if (trajectoryMeshes[id]) {
+                    let isCurrentPlayer = (typeof tAct !== 'undefined' && id === tAct) || (id === window.tAct);
+                    trajectoryMeshes[id].visible = isCurrentPlayer ? true : !!(t.userData && t.userData.showEnvelope);
+                }
             }
         });
     } catch (error) { console.error("回合結算錯誤：", error); }

@@ -1,5 +1,5 @@
 // ============================================================================
-// ui.js - MFD 儀表板、輸入控制與隊伍切換 (觸控相容 + 座標修復 + 多指防跳躍完美版)
+// ui.js - MFD 儀表板與輸入控制 (5檔磁吸滑軌控制)
 // ============================================================================
 
 let isDraggingJoystick = false;
@@ -14,97 +14,94 @@ document.addEventListener("DOMContentLoaded", () => {
     let btnRed = document.getElementById('btn-sel-red');
     let btnBlue = document.getElementById('btn-sel-blue');
     
-    // 🌟 注入 CSS：改用相對定位 (relative)，讓按鈕能融入父容器的排版
-    const style = document.createElement('style');
-    style.innerHTML = `
-        /* 改造紅藍切換按鈕，移除 fixed 定位 */
-        #btn-sel-red, #btn-sel-blue {
-            position: relative !important; 
-            width: 32px !important;
-            height: 32px !important;
-            border-radius: 50% !important;
-            padding: 0 !important;
-            min-width: 0 !important;
-            color: transparent !important; 
-            text-indent: -9999px;
-            cursor: pointer;
-            transition: all 0.3s ease;
-            flex-shrink: 0; /* 防止在窄手機螢幕上被擠壓變扁 */
-            margin: 0 10px; /* 與播放器按鈕保持舒適的間距 */
-        }
-        #btn-sel-red { background: #ff0055 !important; }
-        #btn-sel-blue { background: #00bcd4 !important; }
-        
-        /* 隱藏 XYZ 盲腸 */
-        #hud-val-x, #hud-val-y, #hud-val-z { display: none !important; }
-        .xyz-container, .coordinate-panel { display: none !important; }
-    `;
-    document.head.appendChild(style);
-
     if(btnRed && btnBlue) {
-        btnRed.innerText = '';
-        btnBlue.innerText = '';
-
-        // 🚀 核心魔法：尋找播放面板，並把圓點直接塞進去！
-        let repPlayBtn = document.getElementById('btn-rep-play');
-        if (repPlayBtn && repPlayBtn.parentElement) {
-            let repPanel = repPlayBtn.parentElement;
-            
-            // 將播放面板升級為 Flexbox 排版，讓裡面的元素自動置中對齊
-            repPanel.style.display = 'flex';
-            repPanel.style.alignItems = 'center';
-            repPanel.style.justifyContent = 'center';
-            
-            // 把紅隊圓點插入到播放面板的最前方 (左邊)
-            repPanel.insertBefore(btnRed, repPanel.firstChild);
-            
-            // 把藍隊圓點附加到播放面板的最後方 (右邊)
-            repPanel.appendChild(btnBlue);
-        }
-
         btnRed.addEventListener('click', () => {
             if(typeof selectTeam === 'function') selectTeam('red');
-            btnRed.style.border = '3px solid #fff'; btnRed.style.boxShadow = '0 0 15px #ff0055';
-            btnBlue.style.border = '2px solid #444'; btnBlue.style.boxShadow = 'none';
+            btnRed.style.border = '2px solid #fff'; btnRed.style.color = '#fff'; btnRed.style.background = '#ff0055'; btnRed.style.boxShadow = '0 0 10px rgba(255,0,85,0.5)';
+            btnBlue.style.border = '2px solid #444'; btnBlue.style.color = '#00bcd4'; btnBlue.style.background = '#111'; btnBlue.style.boxShadow = 'none';
         });
         btnBlue.addEventListener('click', () => {
             if(typeof selectTeam === 'function') selectTeam('blue');
-            btnBlue.style.border = '3px solid #fff'; btnBlue.style.boxShadow = '0 0 15px #00bcd4';
-            btnRed.style.border = '2px solid #444'; btnRed.style.boxShadow = 'none';
+            btnBlue.style.border = '2px solid #fff'; btnBlue.style.color = '#fff'; btnBlue.style.background = '#00bcd4'; btnBlue.style.boxShadow = '0 0 10px rgba(0,188,212,0.5)';
+            btnRed.style.border = '2px solid #444'; btnRed.style.color = '#ff0055'; btnRed.style.background = '#111'; btnRed.style.boxShadow = 'none';
         });
-        
-        // 開局初始化外觀
-        if(window.tAct === 'red') btnRed.click();
-        else btnBlue.click();
     }
 
-    [1, 2, 3].forEach(level => {
-        let btn = document.getElementById(`btn-thr-${level}`);
-        if (btn) {
-            btn.addEventListener('click', () => {
-                let t = teams[tAct]; if (!t || t.isDestroyed || isAnimating || t.ready) return;
-                if (level === 3 && t.heat > 40) { showSMSAlert("🛑 溫度過高：必須低於 40°C 才能點火後燃器！", "#ff0055"); return; }
-                t.throttle = level;
-                if (typeof updateTrajectoryPreview === 'function') updateTrajectoryPreview(t);
-            });
-        }
-    });
+    // 🚀 全新節流閥：5 檔磁吸滑軌控制
+    const thrTrack = document.getElementById('throttle-track');
+    const thrHandle = document.getElementById('throttle-handle');
+    let isDraggingThrottle = false;
 
+    if (thrTrack && thrHandle) {
+        const updateThrottleLogic = (clientY) => {
+            let currentTeam = typeof tAct !== 'undefined' ? tAct : window.activeTeamId;
+            let t = teams[currentTeam]; 
+            if (!t || t.isDestroyed || isAnimating || t.ready) return;
+            
+            const rect = thrTrack.getBoundingClientRect();
+            let percent = 1.0 - ((clientY - rect.top) / rect.height);
+            percent = Math.max(0, Math.min(1, percent));
+
+            // 🟢 5 檔磁吸邊界計算
+            let newLevel = 4; // 預設 MIL (4檔)
+            if (percent > 0.9) newLevel = 5;      // AB
+            else if (percent > 0.7) newLevel = 4; // MIL
+            else if (percent > 0.45) newLevel = 3; // ECO
+            else if (percent > 0.2) newLevel = 2; // IDL
+            else newLevel = 1;                    // BRK (空氣減速板)
+
+            // 後燃器過熱保險鎖定
+            if (newLevel === 5 && t.heat > 40) {
+                newLevel = 4; 
+                showSMSAlert("🛑 溫度過高：必須低於 40°C 才能點火後燃器！", "#ff0055");
+            }
+
+            if (t.throttle !== newLevel) {
+                t.throttle = newLevel;
+                updateDashboardUI(t); // 自動吸附定位
+                if (typeof window.updateTacticalPreview === 'function') window.updateTacticalPreview(t);
+            }
+        };
+
+        thrHandle.addEventListener('mousedown', (e) => { isDraggingThrottle = true; });
+        window.addEventListener('mousemove', (e) => { if (isDraggingThrottle) updateThrottleLogic(e.clientY); });
+        window.addEventListener('mouseup', () => { isDraggingThrottle = false; });
+
+        thrHandle.addEventListener('touchstart', (e) => { if (e.cancelable) e.preventDefault(); isDraggingThrottle = true; }, { passive: false });
+        window.addEventListener('touchmove', (e) => { 
+            if (isDraggingThrottle) {
+                if (e.cancelable) e.preventDefault();
+                let touch = Array.from(e.touches).find(evt => evt.target.closest('#throttle-track') || evt.target === thrHandle);
+                if (touch) updateThrottleLogic(touch.clientY);
+            }
+        }, { passive: false });
+        window.addEventListener('touchend', () => { isDraggingThrottle = false; });
+    }
+
+    // 🌟 SMS 武器切換
     let smsContent = document.getElementById('sms-text-content');
     if(smsContent) smsContent.addEventListener('click', () => {
-        let t = teams[tAct]; if (!t || isAnimating || window.replayMode || t.isDestroyed || t.ready) return;
+        let currentTeam = typeof tAct !== 'undefined' ? tAct : window.activeTeamId;
+        let t = teams[currentTeam]; 
+        if (!t || isAnimating || window.replayMode || t.isDestroyed || t.ready) return;
+        
         t.wpnQueued = false; t.queuedAction = 'none';
         if (t.weapon === 'gun') {
             t.weapon = 'missile'; showSMSAlert("🚀 FOX-2 飛彈系統通電中... [請點擊掛架開機]", "#ffbb00");
         } else {
             t.weapon = 'gun'; showSMSAlert("⚠️ 主保險關閉：切換至機砲模式", "#ff0055");   
         }
-        updateDashboardUI(t); if(window.updateTrajectoryPreview) window.updateTrajectoryPreview(t);
+        updateDashboardUI(t); 
+        if(typeof window.updateTacticalPreview === 'function') window.updateTacticalPreview(t);
     });
 
+    // 🌟 掛架控制
     document.querySelectorAll('.pylon-switch-wrapper').forEach(el => {
         el.addEventListener('click', (e) => {
-            let t = teams[tAct]; if (!t || isAnimating || window.replayMode || t.isDestroyed || t.ready) return;
+            let currentTeam = typeof tAct !== 'undefined' ? tAct : window.activeTeamId;
+            let t = teams[currentTeam]; 
+            if (!t || isAnimating || window.replayMode || t.isDestroyed || t.ready) return;
+            
             if (t.weapon !== 'missile') { showSMSAlert("⚠️ 錯誤：請先將 SMS 切換至飛彈模式", "#ffcc00"); return; }
             let pylonId = parseInt(e.currentTarget.getAttribute('data-pylon'));
             let p = t.pylons.find(item => item.id === pylonId);
@@ -116,13 +113,18 @@ document.addEventListener("DOMContentLoaded", () => {
                 let hasAnyArmed = t.pylons.some(item => item.state === 'armed');
                 if (!hasAnyArmed) { t.wpnQueued = false; t.queuedAction = 'none'; }
             }
-            updateDashboardUI(t); if(window.updateTrajectoryPreview) window.updateTrajectoryPreview(t);
+            updateDashboardUI(t); 
+            if(typeof window.updateTacticalPreview === 'function') window.updateTacticalPreview(t);
         });
     });
 
+    // 🌟 武器確認發射
     let btnEnt = document.getElementById('sms-enter-btn');
     if(btnEnt) btnEnt.addEventListener('click', () => {
-        let t = teams[tAct]; if (!t || isAnimating || window.replayMode || t.isDestroyed || t.ready) return;
+        let currentTeam = typeof tAct !== 'undefined' ? tAct : window.activeTeamId;
+        let t = teams[currentTeam]; 
+        if (!t || isAnimating || window.replayMode || t.isDestroyed || t.ready) return;
+        
         if (t.weapon === 'gun') {
             if (t.wpnQueued && t.queuedAction === 'gun') { t.wpnQueued = false; t.queuedAction = 'none'; showSMSAlert("⚠️ 機砲保險已關閉", "#aaa");
             } else { t.wpnQueued = true; t.queuedAction = 'gun'; showSMSAlert("⚡ 機砲射擊線已通電", "#00ff88"); }
@@ -135,113 +137,96 @@ document.addEventListener("DOMContentLoaded", () => {
             } else if (poweringCount > 0) { showSMSAlert("🛑 尋標頭開機中！", "#ffbb00");
             } else { t.wpnQueued = false; t.queuedAction = 'none'; showSMSAlert("🛑 無掛架就緒", "#ff0055"); }
         }
-        updateDashboardUI(t); if(window.updateTrajectoryPreview) window.updateTrajectoryPreview(t);
+        updateDashboardUI(t); 
+        if(typeof window.updateTacticalPreview === 'function') window.updateTacticalPreview(t);
     });
 
+    // 🌟 頂部 Flare 釋放與武裝事件
     const btnFlare = document.getElementById('btn-flare');
     if (btnFlare) {
         btnFlare.addEventListener('click', () => {
-            let t = teams[tAct]; if (!t || t.isDestroyed || isAnimating || t.ready) return;
+            let currentTeam = typeof tAct !== 'undefined' ? tAct : window.activeTeamId;
+            let t = teams[currentTeam]; 
+            if (!t || t.isDestroyed || isAnimating || t.ready) return;
+            
             if (t.flareAmmo <= 0) { showSMSAlert("🛑 FLARE EMPTY", "#ff0055"); return; }
             t.flaresArmed = !t.flaresArmed;
             if (t.flaresArmed) { t.wpnQueued = false; t.queuedAction = 'flare'; showSMSAlert("🔆 熱焰彈排程中", "#ff9800");
             } else { t.queuedAction = 'none'; showSMSAlert("⚠️ 熱焰彈解除", "#aaa"); }
-            updateDashboardUI(t); if (typeof updateTrajectoryPreview === 'function') updateTrajectoryPreview(t);
+            updateDashboardUI(t); 
+            if(typeof window.updateTacticalPreview === 'function') window.updateTacticalPreview(t);
         });
     }
 
-    let btnGlim = document.getElementById('btn-glimiter');
-    if(btnGlim) btnGlim.addEventListener('click', () => {
-        let t = teams[tAct]; if (!t || isAnimating || window.replayMode || t.isDestroyed || t.ready) return;
-        t.gLimiterOn = !t.gLimiterOn; updateDashboardUI(t); if(window.updateTrajectoryPreview) window.updateTrajectoryPreview(t);
-    });
-
     let btnEngage = document.getElementById('btn-engage');
     if(btnEngage) btnEngage.addEventListener('click', () => {
-        let t = teams[tAct]; if (!t || isAnimating || window.replayMode || t.isDestroyed || t.ready) return;
-        if (t.pathPoints && t.pathPoints.length > 0) {
-            t.wrapper.position.copy(t.pathPoints[t.pathPoints.length - 1]);
-            t.wrapper.quaternion.copy(t.pathQuats[t.pathQuats.length - 1]);
-            t.ap = Math.max(0, t.ap - (t.previewCostAp || 0)); t.heat = Math.min(100, t.heat + (t.previewAccumHeat || 0));
-        }
+        let currentTeam = typeof tAct !== 'undefined' ? tAct : window.activeTeamId;
+        let t = teams[currentTeam]; 
+        if (!t || isAnimating || window.replayMode || t.isDestroyed || t.ready) return;
+        
         t.joyX = 0; t.joyY = 0; t.roll = 0; t.pendingRoll = 0; t.pendingYaw = 0; t.pendingPitch = 0;
         resetJoystickUI(); t.ready = true; updateDashboardUI(t);
-        let oppId = tAct === 'red' ? 'blue' : 'red';
-        if (teams[oppId].ready || teams[oppId].isDestroyed) { if(window.executeTurnSimultaneously) window.executeTurnSimultaneously();
-        } else { if(window.selectTeam) window.selectTeam(oppId); }
+        let oppId = currentTeam === 'red' ? 'blue' : 'red';
+        if (teams[oppId].ready || teams[oppId].isDestroyed) { 
+            if(window.executeTurnSimultaneously) window.executeTurnSimultaneously();
+        } else { 
+            if(window.selectTeam) window.selectTeam(oppId); 
+        }
     });
 
-    // 🌟 搖桿精密控制綁定 (防死鎖、多指防劫持暴跳)
+    // 🌟 搖桿觸控事件
     const joyZone = document.getElementById('joystick-zone');
     if (joyZone) {
-        joyZone.addEventListener('mousedown', startJoystickDrag); 
-        window.addEventListener('mousemove', doJoystickDrag); 
-        window.addEventListener('mouseup', endJoystickDrag);
-        
-        // 移動端優化：阻止彈性滾動，防止網頁卡死搖桿
-        joyZone.addEventListener('touchstart', (e) => { 
-            if (e.cancelable) e.preventDefault(); 
-            startJoystickDrag(e.targetTouches[0] || e.touches[0]); 
-        }, { passive: false }); 
-        
-        window.addEventListener('touchmove', (e) => { 
-            if (isDraggingJoystick) {
-                // 精確篩選：只追蹤最初落在搖桿區域內的觸控點，徹底無視另外一根點擊螢幕的手指
-                let touch = Array.from(e.touches).find(t => t.target.closest('#joystick-zone') || t.target === joyZone);
-                if (touch) {
-                    if (e.cancelable) e.preventDefault();
-                    doJoystickDrag(touch);
-                }
-            }
-        }, { passive: false }); 
-        
+        joyZone.addEventListener('mousedown', startJoystickDrag); window.addEventListener('mousemove', doJoystickDrag); window.addEventListener('mouseup', endJoystickDrag);
+        joyZone.addEventListener('touchstart', (e) => { if (e.cancelable) e.preventDefault(); startJoystickDrag(e.touches[0]); }, { passive: false }); 
+        window.addEventListener('touchmove', (e) => { if (isDraggingJoystick) { if (e.cancelable) e.preventDefault(); doJoystickDrag(e.touches[0]); } }, { passive: false }); 
         window.addEventListener('touchend', endJoystickDrag);
     }
 
-    // 🌟 滾轉輪 (Roll Ring) 精密控制綁定
+    // 🌟 滾轉輪 (Roll Ring) 觸控與旋轉
     const rollRing = document.getElementById('roll-ring'); const staticCenter = document.getElementById('control-assembly-center'); 
     if (rollRing && staticCenter) {
         function startRoll(clientX, clientY, e) {
-            let t = teams[tAct]; if (!t || t.isDestroyed || isAnimating || t.ready) return;
+            let currentTeam = typeof tAct !== 'undefined' ? tAct : window.activeTeamId;
+            let t = teams[currentTeam]; 
+            if (!t || t.isDestroyed || isAnimating || t.ready) return;
+            
             isDraggingRollRing = true; if(e && e.stopPropagation) e.stopPropagation(); 
             const rect = staticCenter.getBoundingClientRect(); initialMouseAngle = Math.atan2(clientX - (rect.left + rect.width / 2), -(clientY - (rect.top + rect.height / 2)));
             initialRingRoll = t.pendingRoll !== 0 ? t.pendingRoll : (t.roll || 0);
         }
         function doRoll(clientX, clientY) {
-            if (!isDraggingRollRing) return; let t = teams[tAct]; if (!t) return;
+            if (!isDraggingRollRing) return; 
+            let currentTeam = typeof tAct !== 'undefined' ? tAct : window.activeTeamId;
+            let t = teams[currentTeam]; if (!t) return;
+            
             const rect = staticCenter.getBoundingClientRect(); let currentMouseAngle = Math.atan2(clientX - (rect.left + rect.width / 2), -(clientY - (rect.top + rect.height / 2)));
             let deltaAngle = currentMouseAngle - initialMouseAngle; if (deltaAngle > Math.PI) deltaAngle -= Math.PI * 2; if (deltaAngle < -Math.PI) deltaAngle += Math.PI * 2;
             let angle = initialRingRoll + deltaAngle; if (t.gLimiterOn) { const maxRollLimit = Math.PI / 4; angle = Math.max(-maxRollLimit, Math.min(maxRollLimit, angle)); }
-            t.pendingRoll = angle; rollRing.style.transform = `rotate(${angle}rad)`; if (typeof updateTrajectoryPreview === 'function') updateTrajectoryPreview(t);
+            t.pendingRoll = angle; 
+            
+            rollRing.style.transform = `translate(-50%, -50%) rotate(${angle}rad)`; 
+            if (typeof window.updateTacticalPreview === 'function') window.updateTacticalPreview(t);
         }
         function endRoll() { isDraggingRollRing = false; }
 
         rollRing.addEventListener('mousedown', (e) => startRoll(e.clientX, e.clientY, e));
         window.addEventListener('mousemove', (e) => doRoll(e.clientX, e.clientY));
         window.addEventListener('mouseup', endRoll);
-        
-        rollRing.addEventListener('touchstart', (e) => { 
-            if (e.cancelable) e.preventDefault(); 
-            startRoll(e.touches[0].clientX, e.touches[0].clientY, e); 
-        }, { passive: false });
-        
-        window.addEventListener('touchmove', (e) => { 
-            if (isDraggingRollRing) {
-                let touch = Array.from(e.touches).find(t => t.target.closest('#roll-ring') || t.target === rollRing);
-                if (touch) {
-                    if (e.cancelable) e.preventDefault();
-                    doRoll(touch.clientX, touch.clientY);
-                }
-            }
-        }, { passive: false });
-        
+        rollRing.addEventListener('touchstart', (e) => { if (e.cancelable) e.preventDefault(); startRoll(e.touches[0].clientX, e.touches[0].clientY, e); }, { passive: false });
+        window.addEventListener('touchmove', (e) => { if (isDraggingRollRing) { if (e.cancelable) e.preventDefault(); doRoll(e.touches[0].clientX, e.touches[0].clientY); } }, { passive: false });
         window.addEventListener('touchend', endRoll);
     }
 
     window.updateDashboardUI = updateDashboardUI;
 });
 
-function startJoystickDrag(e) { let t = teams[tAct]; if (!t || t.isDestroyed || isAnimating || t.ready) return; isDraggingJoystick = true; updateJoystickPosition(e); }
+function startJoystickDrag(e) { 
+    let currentTeam = typeof tAct !== 'undefined' ? tAct : window.activeTeamId; 
+    let t = teams[currentTeam]; 
+    if (!t || t.isDestroyed || isAnimating || t.ready) return; 
+    isDraggingJoystick = true; updateJoystickPosition(e); 
+}
 function doJoystickDrag(e) { if (!isDraggingJoystick) return; updateJoystickPosition(e); }
 function endJoystickDrag() { isDraggingJoystick = false; }
 
@@ -252,18 +237,41 @@ function updateJoystickPosition(e) {
     let dx = e.clientX - centerX; let dy = e.clientY - centerY; let dist = Math.sqrt(dx * dx + dy * dy);
     if (dist > maxRadius) { dx = (dx / dist) * maxRadius; dy = (dy / dist) * maxRadius; dist = maxRadius; }
     joyHandle.style.transform = `translate(${dx}px, ${dy}px)`;
-    let t = teams[tAct];
-    if (t) { t.joyX = dx / maxRadius; t.joyY = -dy / maxRadius; t.pendingRoll = 0; t.roll = t.joyX * (Math.PI / 4); if (typeof updateTrajectoryPreview === 'function') updateTrajectoryPreview(t); }
+    let currentTeam = typeof tAct !== 'undefined' ? tAct : window.activeTeamId;
+    let t = teams[currentTeam];
+    if (t) { 
+        t.joyX = dx / maxRadius; t.joyY = -dy / maxRadius; t.pendingRoll = 0; t.roll = t.joyX * (Math.PI / 4); 
+        if (typeof window.updateTacticalPreview === 'function') window.updateTacticalPreview(t); 
+    }
 }
 
 function resetJoystickUI() { const joyHandle = document.getElementById('joystick-handle'); if (joyHandle) joyHandle.style.transform = `translate(0px, 0px)`; }
 
 function updateDashboardUI(teamObj) {
-    if (!teamObj || teamObj.id !== tAct) return;
+    let currentTeam = typeof tAct !== 'undefined' ? tAct : window.activeTeamId;
+    if (!teamObj || teamObj.id !== currentTeam) return;
 
-    [1, 2, 3].forEach(level => { let btn = document.getElementById(`btn-thr-${level}`); if (btn) btn.classList.toggle('active', teamObj.throttle === level); });
+    // 🚀 5 檔磁吸滑動位置
+    let handle = document.getElementById('throttle-handle');
+    if (handle) {
+        if (teamObj.throttle === 5) handle.style.top = '0%';
+        else if (teamObj.throttle === 4) handle.style.top = '25%';
+        else if (teamObj.throttle === 3) handle.style.top = '50%';
+        else if (teamObj.throttle === 2) handle.style.top = '75%';
+        else handle.style.top = '100%';
+    }
 
-    let baseAp = (typeof teamObj.ap === 'number' && !isNaN(teamObj.ap)) ? teamObj.ap : 100;
+    // 將各個文字檔亮燈
+    document.querySelectorAll('#throttle-track .thr-mark').forEach((el, index) => {
+        let level = 5 - index;
+        if (teamObj.throttle === level) {
+            el.classList.add('mark-active');
+        } else {
+            el.classList.remove('mark-active');
+        }
+    });
+
+    let baseAp = (typeof teamObj.ap === 'number' && !isNaN(teamObj.ap)) ? teamObj.ap : 120;
     let costAp = (typeof teamObj.previewCostAp === 'number' && !isNaN(teamObj.previewCostAp)) ? teamObj.previewCostAp : 0;
     let previewAp = Math.max(0, baseAp - costAp);
 
@@ -271,29 +279,21 @@ function updateDashboardUI(teamObj) {
     let accHeat = (typeof teamObj.previewAccumHeat === 'number' && !isNaN(teamObj.previewAccumHeat)) ? teamObj.previewAccumHeat : 0;
     let previewHeat = Math.min(100, baseHeat + accHeat);
 
-    let apVal = document.getElementById('hud-val-ap');
-    let apNeedle = document.getElementById('needle-ap');
+    let apVal = document.getElementById('hud-val-ap'); let apNeedle = document.getElementById('needle-ap');
     if (apVal) apVal.innerText = Math.floor(previewAp);
+    // 🌟 解鎖 AP 指針上限到 250
     if (apNeedle) {
-        let maxGaugeAP = 250; 
-        let deg = -90 + (previewAp / maxGaugeAP) * 180;
-        if (isNaN(deg)) deg = -90; 
-        deg = Math.max(-90, Math.min(90, deg));
-        let theta = deg * Math.PI / 180;
-        let x2 = 50 + 28 * Math.sin(theta); let y2 = 50 - 28 * Math.cos(theta);
+        let maxGaugeAP = 250; let deg = -90 + (previewAp / maxGaugeAP) * 180; if (isNaN(deg)) deg = -90; deg = Math.max(-90, Math.min(90, deg));
+        let theta = deg * Math.PI / 180; let x2 = 50 + 28 * Math.sin(theta); let y2 = 50 - 28 * Math.cos(theta);
         apNeedle.setAttribute('x2', x2); apNeedle.setAttribute('y2', y2); apNeedle.style.transform = ''; 
     }
 
-    let heatVal = document.getElementById('hud-val-heat');
-    let heatNeedle = document.getElementById('needle-heat');
+    let heatVal = document.getElementById('hud-val-heat'); let heatNeedle = document.getElementById('needle-heat');
     if (heatVal) heatVal.innerText = Math.floor(previewHeat);
+    // 🌟 指針上限調整至 100 滿表
     if (heatNeedle) {
-        let maxGaugeHeat = 100;
-        let deg = -90 + (previewHeat / maxGaugeHeat) * 180;
-        if (isNaN(deg)) deg = -90;
-        deg = Math.max(-90, Math.min(90, deg));
-        let theta = deg * Math.PI / 180;
-        let x2 = 50 + 28 * Math.sin(theta); let y2 = 50 - 28 * Math.cos(theta);
+        let maxGaugeHeat = 100; let deg = -90 + (previewHeat / maxGaugeHeat) * 180; if (isNaN(deg)) deg = -90; deg = Math.max(-90, Math.min(90, deg));
+        let theta = deg * Math.PI / 180; let x2 = 50 + 28 * Math.sin(theta); let y2 = 50 - 28 * Math.cos(theta);
         heatNeedle.setAttribute('x2', x2); heatNeedle.setAttribute('y2', y2); heatNeedle.style.transform = ''; 
     }
 
@@ -301,8 +301,7 @@ function updateDashboardUI(teamObj) {
     if (hpFill) {
         let currentHp = (typeof teamObj.hp === 'number' && !isNaN(teamObj.hp)) ? teamObj.hp : 100;
         let maxHp = (typeof MAX_HP !== 'undefined' && !isNaN(MAX_HP)) ? MAX_HP : 100;
-        let hpPercent = Math.max(0, Math.min(100, (currentHp / maxHp) * 100));
-        if (isNaN(hpPercent)) hpPercent = 100;
+        let hpPercent = Math.max(0, Math.min(100, (currentHp / maxHp) * 100)); if (isNaN(hpPercent)) hpPercent = 100;
         hpFill.style.height = `${hpPercent}%`;
         if (hpPercent < 30) { hpFill.style.backgroundColor = '#ff1100'; hpFill.style.boxShadow = '0 0 10px #ff1100'; } 
         else { let tColor = teamObj.id === 'red' ? '#ff0055' : '#00bcd4'; hpFill.style.backgroundColor = tColor; hpFill.style.boxShadow = `0 0 10px ${tColor}`; }
@@ -328,11 +327,8 @@ function updateDashboardUI(teamObj) {
     if (teamObj.pylons) {
         teamObj.pylons.forEach(p => {
             let stick = document.getElementById(`pylon-stick-${p.id}`); 
-            let lamp = document.getElementById(`pylon-lamp-${p.id}`);
-            if (lamp) lamp.style.display = 'none'; 
-
             if (stick) {
-                stick.style.width = '18px'; stick.style.height = '18px'; stick.style.borderRadius = '4px'; stick.style.marginTop = '4px'; stick.style.transition = 'all 0.3s ease'; stick.className = 'pylon-stick';
+                stick.className = 'pylon-stick';
                 if (p.state === 'empty') { stick.style.background = '#ff0033'; stick.style.boxShadow = '0 0 10px #ff0033'; } 
                 else if (p.state === 'powering') { stick.style.background = '#ffaa00'; stick.style.boxShadow = '0 0 12px #ffaa00'; } 
                 else if (p.state === 'armed') { stick.style.background = '#00ff88'; stick.style.boxShadow = '0 0 15px #00ff88'; } 
@@ -341,13 +337,35 @@ function updateDashboardUI(teamObj) {
         });
     }
 
-    let btnGlim = document.getElementById('btn-glimiter'); if (btnGlim) btnGlim.className = teamObj.gLimiterOn ? 'cockpit-rect-btn btn-g-limit active' : 'cockpit-rect-btn btn-g-limit';
+    // 🌟 Flare 亮燈
     const btnFlare = document.getElementById('btn-flare');
     if (btnFlare) {
-        if (teamObj.flareAmmo <= 0) { btnFlare.className = 'cockpit-rect-btn empty'; btnFlare.innerText = 'FLARE [0]'; } 
-        else if (teamObj.flaresArmed) { btnFlare.className = 'cockpit-rect-btn armed'; btnFlare.innerText = `🔥 FLARE [${teamObj.flareAmmo}]`; } 
-        else { btnFlare.className = 'cockpit-rect-btn'; btnFlare.innerText = `FLARE [${teamObj.flareAmmo}]`; }
+        if (teamObj.flareAmmo <= 0) { 
+            btnFlare.className = 'sms-top-btn'; 
+            btnFlare.innerText = 'FLARE [0]'; 
+            btnFlare.style.color = '#555'; 
+            btnFlare.style.borderColor = '#333'; 
+            btnFlare.style.background = '#111';
+            btnFlare.style.boxShadow = 'none';
+        } 
+        else if (teamObj.flaresArmed) { 
+            btnFlare.className = 'sms-top-btn'; 
+            btnFlare.innerText = `FLARE [${teamObj.flareAmmo}]`; 
+            btnFlare.style.color = '#fff'; 
+            btnFlare.style.borderColor = '#ff9800'; 
+            btnFlare.style.background = '#ff6600'; 
+            btnFlare.style.boxShadow = '0 0 12px #ff9800';
+        } 
+        else { 
+            btnFlare.className = 'sms-top-btn'; 
+            btnFlare.innerText = `FLARE [${teamObj.flareAmmo}]`; 
+            btnFlare.style.color = '#ff9800'; 
+            btnFlare.style.borderColor = '#ff9800'; 
+            btnFlare.style.background = '#111'; 
+            btnFlare.style.boxShadow = 'none';
+        } 
     }
+
     let btnEngage = document.getElementById('btn-engage');
     if (btnEngage) {
         if (teamObj.ready) { btnEngage.className = 'cockpit-rect-btn btn-standby ready'; btnEngage.innerText = '✔ 就緒'; } 
@@ -360,7 +378,11 @@ function showSMSAlert(text, color) {
     if (elSmsContent) {
         elSmsContent.innerText = text; elSmsContent.style.color = color || '#00ff88';
         if(window.smsAlertTimeout) clearTimeout(window.smsAlertTimeout);
-        window.smsAlertTimeout = setTimeout(() => { let t = teams[tAct]; if(t) { elSmsContent.style.color = '#ffeb3b'; updateDashboardUI(t); } }, 1800);
+        window.smsAlertTimeout = setTimeout(() => { 
+            let currentTeam = typeof tAct !== 'undefined' ? tAct : window.activeTeamId; 
+            let t = teams[currentTeam]; 
+            if(t) { elSmsContent.style.color = '#ffeb3b'; updateDashboardUI(t); } 
+        }, 1800);
     }
 }
 
@@ -381,7 +403,12 @@ window.addEventListener('EnginePhaseChanged', (e) => {
         case 'playing':
             if(lockScreen) lockScreen.style.display = 'none';
             if(repStatus) repStatus.innerText = "狀態: 播放中";
-            if(repSlider) { repSlider.min = 1; repSlider.max = data.maxLog + 0.99; repSlider.step = 0.01; repSlider.disabled = false; }
+            if(repSlider) { 
+                repSlider.min = 1; 
+                repSlider.max = data.maxLog + 0.99; 
+                repSlider.step = 0.01; 
+                repSlider.disabled = false; 
+            }
             break;
         case 'planning':
             if(lockScreen) lockScreen.style.display = 'none';
@@ -389,110 +416,16 @@ window.addEventListener('EnginePhaseChanged', (e) => {
             if(repStatus) { repStatus.innerText = "狀態: 戰術規劃中"; repStatus.style.color = "#aaa"; }
             if(phaseBanner) { 
                 phaseBanner.innerHTML = `ROUND ${data.turn}<br><span style="font-size: 20px; color: #eee; letter-spacing: 4px; text-shadow: 2px 2px 4px #000;">戰術規劃階段</span>`; 
-                phaseBanner.style.opacity = '1'; setTimeout(() => { phaseBanner.style.opacity = '0'; }, 2200); 
+                phaseBanner.style.opacity = '1'; 
+                setTimeout(() => { phaseBanner.style.opacity = '0'; }, 2200); 
             }
             break;
         case 'game_over':
             if(lockScreen) lockScreen.style.display = 'none';
-            if(phaseBanner) { phaseBanner.innerHTML = `<span style="font-size: 40px; color: #ffeb3b; text-shadow: 2px 2px 10px #ff0000;">ENGAGEMENT OVER</span><br><span style="font-size: 24px; color: #fff;">${data.winner}</span>`; phaseBanner.style.opacity = '1'; }
+            if(phaseBanner) { 
+                phaseBanner.innerHTML = `<span style="font-size: 40px; color: #ffeb3b; text-shadow: 2px 2px 10px #ff0000;">ENGAGEMENT OVER</span><br><span style="font-size: 24px; color: #fff;">${data.winner}</span>`; 
+                phaseBanner.style.opacity = '1'; 
+            }
             break;
     }
-});
-
-// ============================================================================
-// 📊 自動化守門員：真．即時戰術開發動態看板 (Live Runtime Dev Panel)
-// ============================================================================
-document.addEventListener("DOMContentLoaded", () => {
-    // 1. 注入科幻風格的 CSS 樣式
-    const style = document.createElement('style');
-    style.innerHTML = `
-        #live-dev-panel {
-            position: fixed; top: 10px; right: 10px; width: 320px;
-            background: rgba(16, 16, 16, 0.85); border: 1px solid #00ff88;
-            border-radius: 6px; color: #00ff88; font-family: 'Courier New', monospace;
-            font-size: 11px; z-index: 999999; box-shadow: 0 0 15px rgba(0,255,136,0.2);
-            transition: all 0.3s ease; overflow: hidden;
-        }
-        #live-dev-panel.collapsed { height: 30px; width: 120px; border-color: #555; color: #aaa; }
-        .dev-panel-header { 
-            background: rgba(0, 255, 136, 0.15); padding: 6px 10px; 
-            font-weight: bold; cursor: pointer; display: flex; justify-content: space-between; align-items: center;
-        }
-        .dev-panel-content { padding: 10px; max-height: 400px; overflow-y: auto; }
-        .dev-table { width: 100%; border-collapse: collapse; margin-top: 5px; }
-        .dev-table th, .dev-table td { border-bottom: 1px solid rgba(0,255,136,0.15); padding: 5px 4px; text-align: left; }
-        .dev-table th { color: #ffeb3b; font-size: 10px; text-transform: uppercase; }
-        .dev-val { color: #fff; font-weight: bold; text-align: right; }
-        .dev-section-title { color: #00bcd4; margin-top: 8px; font-weight: bold; border-left: 2px solid #00bcd4; padding-left: 4px; }
-    `;
-    document.head.appendChild(style);
-
-    // 2. 建立面板的 HTML 結構
-    const panel = document.createElement('div');
-    panel.id = 'live-dev-panel';
-    panel.className = 'collapsed'; // 預設收起，不擋住遊戲畫面
-    panel.innerHTML = `
-        <div class="dev-panel-header" id="dev-panel-toggle">
-            <span>📊 DEV MEMO</span>
-            <span id="dev-panel-arrow">展開</span>
-        </div>
-        <div class="dev-panel-content">
-            <div class="dev-section-title">🌍 全域環境物理</div>
-            <table class="dev-table">
-                <tr><td>世界標準重力 (g)</td><td class="dev-val" id="dev-g">-</td></tr>
-                <tr><td>最低失速門檻 (AP)</td><td class="dev-val" id="dev-stall">-</td></tr>
-            </table>
-            
-            <div class="dev-section-title">⚔️ 當前選中隊伍機動 (${tAct.toUpperCase()})</div>
-            <table class="dev-table">
-                <tr><td>戰機現有動能 (AP)</td><td class="dev-val" id="dev-current-ap">-</td></tr>
-                <tr><td>發動機當前溫度 (°C)</td><td class="dev-val" id="dev-current-heat">-</td></tr>
-                <tr><td>失速狀態 (Stalled)</td><td class="dev-val" id="dev-current-stall">-</td></tr>
-            </table>
-
-            <div class="dev-section-title">💥 航向機砲主參數</div>
-            <table class="dev-table">
-                <tr><td>安裝向上仰角 (Elevation)</td><td class="dev-val" id="dev-gun-el">-</td></tr>
-                <tr><td>砲彈專屬重力乘數 (Mult)</td><td class="dev-val" id="dev-gun-gmult">-</td></tr>
-                <tr><td>武器核心極限射程 (Range)</td><td class="dev-val" id="dev-gun-range">-</td></tr>
-            </table>
-        </div>
-    `;
-    document.body.appendChild(panel);
-
-    // 3. 綁定點擊收起/展開事件
-    const toggleBtn = document.getElementById('dev-panel-toggle');
-    const arrow = document.getElementById('dev-panel-arrow');
-    toggleBtn.addEventListener('click', () => {
-        panel.classList.toggle('collapsed');
-        arrow.innerText = panel.classList.contains('collapsed') ? '展開' : '收起';
-    });
-
-    // 4. 建立每秒自動記憶體輪詢機制 (Live Echo)
-    setInterval(() => {
-        if (panel.classList.contains('collapsed')) return; // 收起時暫停刷新，節省效能
-        
-        try {
-            // 讀取全域環境
-            document.getElementById('dev-g').innerText = CONFIG.rules.gravity.toFixed(1) + " m/s²";
-            document.getElementById('dev-stall').innerText = CONFIG.rules.stallSpeedAP + " AP";
-            
-            // 讀取即時戰機狀態
-            let t = teams[tAct];
-            document.getElementById('dev-current-ap').innerText = Math.floor(t.ap) + " AP";
-            document.getElementById('dev-current-heat').innerText = Math.floor(t.heat) + " °C";
-            document.getElementById('dev-current-stall').innerText = t.stalled ? "⚠️ STALL" : "🟢 FLYING";
-            document.getElementById('dev-current-stall').style.color = t.stalled ? "#ff0033" : "#00ff88";
-
-            // 讀取最新武器庫物理
-            let gun = CONFIG.weapons['gun'];
-            let elDeg = ((gun.elevation || 0) * 180 / Math.PI);
-            document.getElementById('dev-gun-el').innerText = elDeg.toFixed(1) + "°";
-            document.getElementById('dev-gun-gmult').innerText = (gun.gravityMult * 100).toFixed(0) + "%";
-            document.getElementById('dev-gun-range').innerText = gun.range + " m";
-            
-        } catch (err) {
-            // 防止開局加載順序導致的短暫 undefined 報錯
-        }
-    }, 400); // 每 0.4 秒神經網路自動同步一次
 });

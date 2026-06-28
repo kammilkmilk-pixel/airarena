@@ -1,185 +1,147 @@
 // ============================================================================
-// hud.js - 動態投影與鎖定視覺系統 (Dynamic HUD & Replay Tags)
-// 負責 3D 座標映射、地形遮蔽(LOS)檢測與重播浮動標籤
+// hud.js - 戰機火控雷達與動態 HUD 投影系統 (真·強控權限防覆蓋完全體)
 // ============================================================================
 
-let isEnvelopeVisible = true;
-
-document.addEventListener("DOMContentLoaded", () => {
-    console.log("🎯 HUD Manager initialized.");
+// 🌟 初始化 HUD 點擊事件 (用於開關包絡線)
+if (typeof window.hudClickListenerRegistered === 'undefined') {
+    window.hudClickListenerRegistered = true;
+    const setupHudClick = () => {
+        let hudElement = document.getElementById('dynamic-hud');
+        if (hudElement && !hudElement.dataset.clickBound) {
+            hudElement.dataset.clickBound = "true";
+            hudElement.style.pointerEvents = "auto";
+            hudElement.addEventListener('click', (e) => {
+                let currentTeam = typeof tAct !== 'undefined' ? tAct : window.activeTeamId;
+let enemyId = currentTeam === 'red' ? 'blue' : 'red';
+                let enemy = (typeof teams !== 'undefined') ? teams[enemyId] : null; 
     
-    // 綁定點擊事件：切換綠色包絡線的顯示/隱藏
-    const hudElement = document.getElementById('dynamic-hud');
-    if (hudElement) {
-        hudElement.addEventListener('click', () => {
-            isEnvelopeVisible = !isEnvelopeVisible;
-            if (typeof threatEnvGroup !== 'undefined' && threatEnvGroup) {
-                threatEnvGroup.visible = isEnvelopeVisible;
-            }
-        });
-    }
-});
+                if (enemy) {
+                    if (!enemy.userData) enemy.userData = {};
+                    enemy.userData.showEnvelope = !enemy.userData.showEnvelope;
+                    console.log(`[HUD] 敵機預測包絡線: ${enemy.userData.showEnvelope ? 'ON' : 'OFF'}`);
+        
+                    // 🟢 同步控制蜘蛛網 (threatEnvGroup) 與 單一光帶
+                    if (typeof threatEnvGroup !== 'undefined') {
+                        threatEnvGroup.visible = enemy.userData.showEnvelope;
+                    }
+                    if (typeof trajectoryMeshes !== 'undefined' && trajectoryMeshes[enemyId]) {
+                        trajectoryMeshes[enemyId].visible = enemy.userData.showEnvelope;
+                    }
+                }
+            });
+        }
+    };
+    document.addEventListener('DOMContentLoaded', setupHudClick);
+    setupHudClick(); 
+}
 
-/**
- * 戰術規劃階段：更新敵機鎖定框 (包含 3D 投影與地形遮蔽判定)
- */
-window.updateDynamicHUD = function(teamObj) {
-    const hudElement = document.getElementById('dynamic-hud');
-    const shapeElement = document.getElementById('hud-shape');
-    if (!hudElement || !shapeElement || !teamObj) return;
+window.updateDynamicHUD = function() {
+    let t = teams[tAct];
+    let enemy = tAct === 'red' ? teams.blue : teams.red;
+    
+    let hudElement = document.getElementById('dynamic-hud');
+    if (!hudElement) return;
 
-    const enemyId = teamObj.id === 'red' ? 'blue' : 'red';
-    const enemyObj = teams[enemyId];
-
-    // 如果敵機不存在、被擊毀或處於重播模式，則隱藏 HUD
-    if (!enemyObj || !enemyObj.wrapper || enemyObj.isDestroyed || window.replayMode || isAnimating) {
+    let isReplaying = window.replayMode || (typeof isAnimating !== 'undefined' && isAnimating);
+    
+    // 🟢 關鍵修復防線：如果正在重播或飛機炸了，把敵機和己方的軌跡徹底交給重播模組，此處不干涉
+    if (!t || !enemy || t.isDestroyed || enemy.isDestroyed || isReplaying) {
         hudElement.style.display = 'none';
         return;
     }
 
-    // 1. 座標轉換 (3D to 2D)
-    const enemyPos = enemyObj.wrapper.position.clone();
-    enemyPos.project(camera);
+    if (!t.wrapper || !enemy.wrapper) return;
+    let myPos = t.wrapper.position.clone();
+    let enemyPos = enemy.wrapper.position.clone();
 
-    // 檢查是否在攝影機背後 (防鬼影)
-    if (enemyPos.z > 1) {
+    let distance = myPos.distanceTo(enemyPos); 
+    let forward = new THREE.Vector3(0, 0, 1).applyQuaternion(t.wrapper.quaternion).normalize(); 
+    let vecToEnemy = new THREE.Vector3().subVectors(enemyPos, myPos).normalize(); 
+    let angle = forward.angleTo(vecToEnemy); 
+
+    // 雷達搜尋限制 (60度)
+    let radarLimitAngle = Math.PI / 3; 
+    if (angle > radarLimitAngle) {
+        hudElement.style.display = 'none';
+        // 🟢 即使隱藏了 HUD 方框，只要使用者沒點開包絡線，背地裡依然強制關閉敵機線條，防止其他檔案非法點亮
+        if (typeof trajectoryMeshes !== 'undefined' && trajectoryMeshes[enemy.id]) {
+            trajectoryMeshes[enemy.id].visible = !!(enemy.userData && enemy.userData.showEnvelope);
+        }
+        return;
+    }
+
+    let projPos = enemyPos.clone().project(camera);
+    if (projPos.z > 1) {
         hudElement.style.display = 'none';
         return;
     }
 
-    // 轉換為螢幕像素
-    const screenX = (enemyPos.x * 0.5 + 0.5) * window.innerWidth;
-    const screenY = -(enemyPos.y * 0.5 - 0.5) * window.innerHeight;
+    // 視線遮蔽檢測 (防穿牆鎖定)
+    let isObscured = false;
+    if (typeof obstacles !== 'undefined' && obstacles.length > 0) {
+        let raycaster = new THREE.Raycaster(myPos, vecToEnemy);
+        let hits = raycaster.intersectObjects(obstacles, false);
+        if (hits.length > 0 && hits[0].distance < distance) {
+            isObscured = true;
+        }
+    }
 
-    // 將座標寫入 left 和 top，並保留 CSS 裡原本的 -50% 置中效果
-    hudElement.style.left = `${screenX}px`;
-    hudElement.style.top = `${screenY}px`;
-    hudElement.style.transform = `translate(-50%, -50%)`; 
+    // 計算射擊鎖定
+    let lockAngleThreshold = Math.PI / 12; 
+    let isWeaponLocked = !isObscured && distance <= (t.weapon === 'gun' ? 35 : 60) && angle <= lockAngleThreshold;
+
+    let x = (projPos.x * 0.5 + 0.5) * window.innerWidth;
+    let y = (projPos.y * -0.5 + 0.5) * window.innerHeight;
+    hudElement.style.left = `${x}px`;
+    hudElement.style.top = `${y}px`;
     hudElement.style.display = 'block';
 
-    // 2. 地形遮蔽 (LOS) 判定
-    const raycaster = new THREE.Raycaster();
-    const direction = new THREE.Vector3().subVectors(enemyObj.wrapper.position, camera.position).normalize();
-    raycaster.set(camera.position, direction);
-    
-    // obstacles 是 render.js 裡的建築物陣列
-    const intersects = raycaster.intersectObjects(typeof obstacles !== 'undefined' ? obstacles : []);
-    const distanceToEnemy = camera.position.distanceTo(enemyObj.wrapper.position);
-    
-    let isOccluded = (intersects.length > 0 && intersects[0].distance < distanceToEnemy);
-    if (isOccluded) {
-        hudElement.classList.add('occluded');
-        document.getElementById('hud-tgt-type').innerText = 'LOST(LOS)';
-    } else {
-        hudElement.classList.remove('occluded');
-        document.getElementById('hud-tgt-type').innerText = `BOGEY (${enemyObj.type.toUpperCase()})`;
-    }
+    // 視覺反饋
+    let hudShape = document.getElementById('hud-shape');
+    if (hudShape) {
+        hudShape.className = isWeaponLocked ? (t.weapon === 'gun' ? 'shape-gun predicted-hit' : 'shape-circle predicted-hit') : 'shape-square';
+        hudShape.style.opacity = isObscured ? '0.3' : '0.8';
 
-    // 3. 距離與高度更新
-    document.getElementById('hud-tgt-alt').innerText = enemyObj.wrapper.position.y.toFixed(1);
-    document.getElementById('hud-tgt-dist').innerText = distanceToEnemy.toFixed(1);
-
-    // 4. 武裝狀態與形狀切換 (乾淨靜態版)
-    let distance = distanceToEnemy;
-    let forward = new THREE.Vector3(0, 0, 1).applyQuaternion(teamObj.wrapper.quaternion).normalize();
-    let isHitPredicted = false; 
-    let inRange = false;
-
-    if (teamObj.weapon === 'gun') {
-        let stats = CONFIG.aircrafts[teamObj.type || 'mig21'].throttleStats[teamObj.throttle] || { gunAngleMult: 1.0, gunRangeMult: 1.0 };
-        let dRange = GUN_RANGE * stats.gunRangeMult;
-        let dAngle = GUN_ANGLE * stats.gunAngleMult;
-        
-        let vecToEnemy = new THREE.Vector3().subVectors(enemyObj.wrapper.position, teamObj.wrapper.position);
-        let forwardDist = vecToEnemy.dot(forward);
-        
-        if (forwardDist > 0 && forwardDist <= dRange) {
-            inRange = true;
-            let timeSinceSpawn = forwardDist / (dRange * 2.0);
-            let gravDrop = 0.5 * 9.8 * (timeSinceSpawn * 2) * (timeSinceSpawn * 2) * 0.5;
-            let expectedBulletPos = teamObj.wrapper.position.clone().add(forward.clone().multiplyScalar(forwardDist));
-            expectedBulletPos.y -= gravDrop;
-            
-            let coneRadius = forwardDist * Math.tan(dAngle);
-            if (expectedBulletPos.distanceTo(enemyObj.wrapper.position) <= coneRadius) {
-                isHitPredicted = true; 
-            }
-        }
-    } else if (teamObj.weapon === 'missile') {
-        let angle = forward.angleTo(new THREE.Vector3().subVectors(enemyObj.wrapper.position, teamObj.wrapper.position).normalize());
-        if (distance <= SEEKER_RANGE) {
-            inRange = true;
-            let exposedHeat = calculateExposedHeat(100 + enemyObj.heat, enemyObj.wrapper.position, enemyObj.wrapper.quaternion, teamObj.wrapper.position);
-            if (angle <= SEEKER_ANGLE && exposedHeat >= SEEKER_MIN_HEAT) {
-                isHitPredicted = true;
-            }
-        }
-    }
-
-    // 🟢 清空舊樣式，直接依據武器賦予單一形狀，絕對不疊加！
-    shapeElement.className = ''; 
-
-    if (inRange) {
-        if (teamObj.weapon === 'gun') {
-            shapeElement.classList.add('shape-gun');
+        // 當包絡線開啟時，HUD 框點擊後的綠色強化反饋
+        if (enemy.userData && enemy.userData.showEnvelope && !isObscured) {
+            hudShape.style.backgroundColor = 'rgba(0, 255, 136, 0.15)';
+            hudShape.style.boxShadow = '0 0 15px rgba(0, 255, 136, 0.5)';
         } else {
-            shapeElement.classList.add('shape-circle');
+            hudShape.style.backgroundColor = 'transparent';
+            hudShape.style.boxShadow = 'none';
         }
-    } else {
-        shapeElement.classList.add('shape-square');
     }
 
-    // 若必中，加上靜態高亮效果
-    if (isHitPredicted && !isOccluded) {
-        shapeElement.classList.add('predicted-hit');
+    // 🟢 終極主權宣告：確保包絡線嚴格遵守雷達視線 (LOS) 與點擊開關
+    if (typeof trajectoryMeshes !== 'undefined') {
+        if (trajectoryMeshes[t.id]) trajectoryMeshes[t.id].visible = true; // 己方預覽線永遠可見
+        if (trajectoryMeshes[enemy.id]) {
+            trajectoryMeshes[enemy.id].visible = !!(enemy.userData && enemy.userData.showEnvelope && !isObscured);
+        }
     }
+    // 🟢 追加蜘蛛網的管轄權！只要被大樓遮擋 (!isObscured) 或被玩家關閉，就立刻隱藏
+    if (typeof threatEnvGroup !== 'undefined') {
+        threatEnvGroup.visible = !!(enemy.userData && enemy.userData.showEnvelope && !isObscured);
+    }
+
+    // 更新目標數據
+    let tgtType = document.getElementById('hud-tgt-type');
+    if (tgtType) {
+        tgtType.innerText = isObscured ? 'OBSCURED' : (enemy.type ? enemy.type.toUpperCase() : 'TARGET');
+        tgtType.style.color = isObscured ? '#ff9800' : '#00ff88';
+    }
+    let tgtAlt = document.getElementById('hud-tgt-alt');
+    if (tgtAlt) tgtAlt.innerText = enemy.wrapper.position.y.toFixed(1);
+    let tgtDist = document.getElementById('hud-tgt-dist');
+    if (tgtDist) tgtDist.innerText = distance.toFixed(1);
 };
 
-/**
- * 重播階段：更新浮動速度與高度標籤
- */
-window.updateReplayTags = function(currentLog, animProgress) {
-    if (!window.replayMode && (typeof isAnimating === 'undefined' || !isAnimating)) {
-        document.getElementById('replay-tag-red').style.display = 'none';
-        document.getElementById('replay-tag-blue').style.display = 'none';
-        return;
-    }
-
-    ['red', 'blue'].forEach(id => {
-        let tag = document.getElementById(`replay-tag-${id}`);
-        let t = teams[id];
-        
-        if (!tag || !t.wrapper || t.isDestroyed || !currentLog[id]) {
-            if(tag) tag.style.display = 'none';
-            return;
-        }
-
-        // 3D 轉 2D 投影
-        let pos = t.wrapper.position.clone();
-        pos.project(camera);
-        if (pos.z > 1) { tag.style.display = 'none'; return; } // 背後防鬼影
-
-        let screenX = (pos.x * 0.5 + 0.5) * window.innerWidth;
-        let screenY = -(pos.y * 0.5 - 0.5) * window.innerHeight;
-
-        tag.style.left = `${screenX + 20}px`;
-        tag.style.top = `${screenY - 20}px`;
-        tag.style.transform = 'none'; // 清除雙重位移
-        tag.style.display = 'block';
-        
-        // 🟢 1. 取得穩定秒速 (m/s)
-        let speed = 0;
-        let pts = currentLog[id].pts;
-        if (pts && pts.length > 1) {
-            let turnDist = pts[0].distanceTo(pts[pts.length - 1]);
-            speed = (turnDist / 1.5).toFixed(1); 
-        }
-
-        // 🟢 2. 解析歷史紀錄中的 AP 與 引擎溫度 (防呆機制：若劇本無資料則抓取當前狀態)
-        let ap = currentLog[id].ap !== undefined ? currentLog[id].ap : (t.ap || 0);
-        let heat = currentLog[id].heat !== undefined ? currentLog[id].heat : (t.heat || 0);
-
-        // 🟢 3. 拔除 ALT，重組標籤字串 (速度 | AP | 引擎溫度)
-        tag.innerText = `SPD:${speed} | AP:${Math.floor(ap)} | TEMP:${Math.floor(heat)}°C`;
-    });
-};
+// 確保 Hook 注入
+if (typeof window.hudTickRegistered === 'undefined') {
+    window.hudTickRegistered = true;
+    const originalAnimate = window.animate;
+    window.animate = function() {
+        if (originalAnimate) originalAnimate();
+        window.updateDynamicHUD();
+    };
+}

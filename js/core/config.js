@@ -27,12 +27,16 @@ const CONFIG = {
             pitchRate: Math.PI / 3,   
             
             throttleStats: {
-                // 怠速 (Idle)：推力極低，但能【快速散熱】，用於纏鬥中急減速與緊急降溫
-                1: { thrust: 15, heat: -35, turnLimit: 1.0, speedProfile: [1.0, 0.5, 0.1], gunAngleMult: 1.8, gunRangeMult: 0.8 },  
-                // 巡航 (Military)：維持現有溫度【不升不降】，提供穩定的常規戰鬥能量
-                2: { thrust: 35, heat: 0,   turnLimit: 0.7, speedProfile: [1.5, 1.5, 1.5], gunAngleMult: 1.0, gunRangeMult: 1.0 },  
-                // 後燃器 (Afterburner)：【急速加熱】，三次推演就會逼近 100°C 滿載警告
-                3: { thrust: 75, heat: 38,  turnLimit: 0.4, speedProfile: [2.0, 3.0, 5.0], gunAngleMult: 0.4, gunRangeMult: 1.3 }   
+                // 1 檔：減速板 (BRK) - 極速冷卻，用於急煞
+                1: { thrust: 0, heat: -18, turnLimit: 1.0, speedProfile: [0.5, 0.4, 0.1], gunAngleMult: 1.8, gunRangeMult: 0.8 },
+                // 2 檔：怠速 (IDL) - 快速散熱
+                2: { thrust: 15, heat: -12, turnLimit: 1.0, speedProfile: [1.0, 0.8, 0.5], gunAngleMult: 1.5, gunRangeMult: 0.9 },
+                // 3 檔：經濟巡航 (ECO) - 微量冷卻
+                3: { thrust: 30, heat: -6,  turnLimit: 0.85, speedProfile: [1.1, 1.1, 1.0], gunAngleMult: 1.2, gunRangeMult: 1.0 },
+                // 4 檔：軍用最大推力 (MIL) - 常規戰鬥極限
+                4: { thrust: 65, heat: -2,  turnLimit: 0.7, speedProfile: [1.5, 1.5, 1.5], gunAngleMult: 1.0, gunRangeMult: 1.1 },
+                // 5 檔：後燃器 (AB) - 狂暴推力，廢熱極速累積
+                5: { thrust: 180, heat: 22, turnLimit: 0.4, speedProfile: [2.5, 3.0, 5.0], gunAngleMult: 0.4, gunRangeMult: 1.3 }
             },
             visuals: {
                 ribbonWidth: 0.12, engineOffsetY: -0.08, noseOffsetZ: 0.65, tailOffsetZ: -0.6

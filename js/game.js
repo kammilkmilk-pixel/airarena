@@ -21,7 +21,6 @@ function createExhaust() {
     const outerTex = new THREE.CanvasTexture(canvas2); outerTex.wrapS = outerTex.wrapT = THREE.RepeatWrapping;
 
     const exhaustGroup = new THREE.Group(); 
-    // 對齊 MiG-21 尾噴口
     exhaustGroup.position.set(0, -0.08, -0.49);
     
     const innerMat = new THREE.MeshBasicMaterial({ map: machTex, vertexColors: true, blending: THREE.AdditiveBlending, transparent: true, depthWrite: false, side: THREE.DoubleSide });
@@ -53,13 +52,10 @@ function createExhaust() {
 function setupModel(gltf, x, z, yRot) {
     const model = gltf.scene; 
     
-    // 🌟 記錄原始顏色，供受損變暗使用
     model.traverse(c => { 
         if (c.isMesh && c.material) { 
-            c.material = c.material.clone(); // 獨立材質避免污染
-            if (c.material.color) {
-                c.userData.origColor = c.material.color.getHex(); 
-            }
+            c.material = c.material.clone();
+            if (c.material.color) { c.userData.origColor = c.material.color.getHex(); }
         } 
     });
 
@@ -83,11 +79,11 @@ function loadModelAsync(url) {
 async function bootGame() {
     try {
         const [redGltf, blueGltf, foxGltf, vfxReady] = await Promise.all([
-    loadModelAsync('assets/models/mig21_red.glb'),
-    loadModelAsync('assets/models/mig21_blue.glb'),
-    loadModelAsync('assets/models/fox_two.glb').catch(() => null),
-    window.vfxReadyPromise
-]);
+            loadModelAsync('assets/models/mig21_red.glb'),
+            loadModelAsync('assets/models/mig21_blue.glb'),
+            loadModelAsync('assets/models/fox_two.glb').catch(() => null),
+            window.vfxReadyPromise
+        ]);
 
         teams.red.wrapper = setupModel(redGltf, 10, -30, 0);
         teams.blue.wrapper = setupModel(blueGltf, 10, 70, Math.PI);
@@ -116,16 +112,20 @@ async function bootGame() {
 
 bootGame();
 
-window.activeTeamId = tAct; 
+window.activeTeamId = typeof tAct !== 'undefined' ? tAct : 'red'; 
+
 function selectTeam(teamId) {
     if (isAnimating || window.replayMode) return; 
     tAct = teamId; P = teams[tAct]; window.activeTeamId = tAct;  
     document.body.className = `theme-${teamId}`;
-    zoomToSelf(); if (typeof updateDashboardUI === 'function') updateDashboardUI(P); updateHUD();
+    zoomToSelf(); 
+    if (typeof updateDashboardUI === 'function') updateDashboardUI(P); 
+    // 🟢 呼叫最新的預覽管線
+    if (typeof window.updateTacticalPreview === 'function') window.updateTacticalPreview(P);
 }
 
 function zoomToSelf() {
-    if(!P.wrapper || P.isDestroyed || window.replayMode) return;
+    if(!P || !P.wrapper || P.isDestroyed || window.replayMode) return;
     let backOffset = new THREE.Vector3(0, 3.5, -10).applyQuaternion(P.wrapper.quaternion);
     let targetCamPos = P.wrapper.position.clone().add(backOffset);
     let startTime = performance.now(); let startCamPos = camera.position.clone(); let startTarget = controls.target.clone();
@@ -148,11 +148,9 @@ function checkInit() {
 
             ['red', 'blue'].forEach(id => {
                 let t = teams[id]; 
-                
                 t.ap = 107;   
                 t.heat = 0;  
                 t.hp = 100;  
-                
                 t.chain = [{yaw:0, pitch:0, roll:0, throttle:t.throttle, fire:'none'}];
                 let res = simulateFlight(t, t.chain); t.pathPoints = res.points; t.pathQuats = res.quats;
             });
@@ -169,15 +167,27 @@ function checkInit() {
     } 
 }
 
-window.updateTrajectoryPreview = function(teamObj) { updateHUD(); };
+// ============================================================================
+// 🎯 戰術預覽大腦 (完全解耦版)
+// ============================================================================
+window.updateTacticalPreview = function(teamObj) {
+    if(!teamObj || !teamObj.wrapper || teamObj.isDestroyed) return;
+    
+    // 進入重播時關閉 HUD 與幽靈戰機
+    if (window.replayMode) { 
+        if(window.ghostWrapper) window.ghostWrapper.visible = false; 
+        if(typeof threatEnvGroup !== 'undefined' && threatEnvGroup) threatEnvGroup.visible = false; 
+        return; 
+    }
 
-function updateHUD() {
-    if(!P.wrapper || P.isDestroyed) return;
-    if (window.replayMode) { if(window.ghostWrapper) window.ghostWrapper.visible = false; if(threatEnvGroup) threatEnvGroup.visible = false; return; }
-
+    // 將雙方戰機重置到當前回合的起點，準備進行軌跡預演
     ['red', 'blue'].forEach(id => {
         let t = teams[id];
-        if (t.startPos && t.startQuat) { t.wrapper.position.copy(t.startPos); t.wrapper.quaternion.copy(t.startQuat); t.wrapper.userData.logicalQuat.copy(t.startQuat); }
+        if (t.startPos && t.startQuat) { 
+            t.wrapper.position.copy(t.startPos); 
+            t.wrapper.quaternion.copy(t.startQuat); 
+            t.wrapper.userData.logicalQuat.copy(t.startQuat); 
+        }
     });
 
     if (!isAnimating && !window.replayMode) {
@@ -203,57 +213,120 @@ function updateHUD() {
         });
     }
     
-    const acConfig = CONFIG.aircrafts[P.type || 'mig21']; let stats = acConfig.throttleStats[P.throttle] || { heat: 0 };
-    if (P.stalled) { P.chain = [{ yaw: 0, pitch: -(Math.PI / 4), roll: 0, throttle: 3, heatDelta: 38, fire: 'none' }]; } else {
-        let currentYaw = P.pendingYaw !== 0 ? P.pendingYaw : (P.joyX !== undefined ? -(P.joyX * acConfig.maxYaw) : 0);
-        let currentPitch = P.pendingPitch !== 0 ? P.pendingPitch : (P.joyY !== undefined ? -(P.joyY * acConfig.maxPitch) : 0);
-        let currentRoll = P.pendingRoll !== 0 ? P.pendingRoll : (P.roll !== undefined ? P.roll : 0);
-        if (P.gLimiterOn) { currentYaw = Math.max(-acConfig.maxYaw, Math.min(acConfig.maxYaw, currentYaw)); currentPitch = Math.max(-acConfig.maxPitch, Math.min(acConfig.maxPitch, currentPitch)); currentRoll = Math.max(-acConfig.maxRoll, Math.min(acConfig.maxRoll, currentRoll)); }
-        P.chain = [{ yaw: currentYaw, pitch: currentPitch, roll: currentRoll, throttle: P.throttle, heatDelta: stats.heat, fire: P.queuedAction || 'none' }];
+    const acConfig = CONFIG.aircrafts[teamObj.type || 'mig21']; 
+    let stats = acConfig.throttleStats[teamObj.throttle] || { heat: 0 };
+    
+    // 失速紅屏警告
+    let stallScreen = document.getElementById('stall-screen');
+    if (stallScreen) stallScreen.style.display = teamObj.stalled ? 'flex' : 'none';
+
+    // 讀取 UI 輸入
+    let currentYaw = teamObj.pendingYaw !== 0 ? teamObj.pendingYaw : (teamObj.joyX !== undefined ? -(teamObj.joyX * acConfig.maxYaw) : 0);
+    let currentPitch = teamObj.pendingPitch !== 0 ? teamObj.pendingPitch : (teamObj.joyY !== undefined ? -(teamObj.joyY * acConfig.maxPitch) : 0);
+    let currentRoll = teamObj.pendingRoll !== 0 ? teamObj.pendingRoll : (teamObj.roll !== undefined ? teamObj.roll : 0);
+
+    if (teamObj.stalled) { 
+        // 失速物理反饋：操縱靈敏度剩餘 15%，機頭自動下垂
+        currentYaw *= 0.15; currentRoll *= 0.15;
+        currentPitch = (currentPitch * 0.15) + (Math.PI / 12); 
+        teamObj.chain = [{ yaw: currentYaw, pitch: currentPitch, roll: currentRoll, throttle: 4, heatDelta: -2, fire: 'none' }]; 
+    } else {
+        if (teamObj.gLimiterOn) { 
+            currentYaw = Math.max(-acConfig.maxYaw, Math.min(acConfig.maxYaw, currentYaw)); 
+            currentPitch = Math.max(-acConfig.maxPitch, Math.min(acConfig.maxPitch, currentPitch)); 
+            currentRoll = Math.max(-acConfig.maxRoll, Math.min(acConfig.maxRoll, currentRoll)); 
+        }
+        teamObj.chain = [{ yaw: currentYaw, pitch: currentPitch, roll: currentRoll, throttle: teamObj.throttle, heatDelta: stats.heat, fire: teamObj.queuedAction || 'none' }];
+    }   
+       
+    // 呼叫物理引擎
+    let res = simulateFlight(teamObj, teamObj.chain); 
+    teamObj.pathPoints = res.points; teamObj.pathQuats = res.quats; 
+    
+    // 記錄預覽結算的消耗，供 UI 儀表板顯示
+    if (teamObj.chain && teamObj.chain.length > 0) { 
+        teamObj.chain[0].resultingAP = res.finalAP; 
+        teamObj.previewCostAp = teamObj.ap - res.finalAP; 
+        teamObj.previewAccumHeat = teamObj.chain[0].heatDelta; 
     }
     
-    let res = simulateFlight(P, P.chain); P.pathPoints = res.points; P.pathQuats = res.quats; 
-    if (P.chain && P.chain.length > 0) { P.chain[0].resultingAP = res.finalAP; P.previewCostAp = P.ap - res.finalAP; P.previewAccumHeat = P.chain[0].heatDelta; }
+    // 呼叫繪圖引擎
+    if (typeof drawTrajectoryLine === 'function') drawTrajectoryLine(teamObj);
     
-    if (typeof drawTrajectoryLine === 'function') drawTrajectoryLine(P);
-    
-    const enemyId = P.id === 'red' ? 'blue' : 'red';
-    if (trajectoryMeshes[enemyId]) { scene.remove(trajectoryMeshes[enemyId]); trajectoryMeshes[enemyId] = null; }
+    // 🕷️ 敵軍預測蜘蛛網與包絡線更新
+    const enemyId = teamObj.id === 'red' ? 'blue' : 'red';
+    if (typeof trajectoryMeshes !== 'undefined' && trajectoryMeshes[enemyId]) { 
+        scene.remove(trajectoryMeshes[enemyId]); 
+        trajectoryMeshes[enemyId] = null; 
+    }
     
     const enemyObj = teams[enemyId];
-    if (enemyObj && enemyObj.wrapper && !enemyObj.isDestroyed) {
-        while(threatEnvGroup.children.length > 0){ let child = threatEnvGroup.children[0]; if(child.geometry) child.geometry.dispose(); threatEnvGroup.remove(child); }
+    if (enemyObj && enemyObj.wrapper && !enemyObj.isDestroyed && typeof threatEnvGroup !== 'undefined') {
+        while(threatEnvGroup.children.length > 0){ 
+            let child = threatEnvGroup.children[0]; 
+            if(child.geometry) child.geometry.dispose(); 
+            threatEnvGroup.remove(child); 
+        }
         threatEnvGroup.position.set(0, 0, 0); threatEnvGroup.quaternion.identity();
         
         const matT1 = new THREE.LineBasicMaterial({ color: 0x00ff88, transparent: true, opacity: 0.8, blending: THREE.AdditiveBlending }); 
         const matT2 = new THREE.LineBasicMaterial({ color: 0x00aa55, transparent: true, opacity: 0.3, blending: THREE.AdditiveBlending }); 
         const matT3 = new THREE.LineBasicMaterial({ color: 0x006633, transparent: true, opacity: 0.15, blending: THREE.AdditiveBlending });
         
-        function createEnvelopeNet(testThrottle, lineMat) { const segments = 16; const pathSets = []; for (let i = 0; i < segments; i++) { let angle = (i / segments) * Math.PI * 2; let tYaw = -Math.cos(angle) * (Math.PI / 4); let tPitch = Math.sin(angle) * (Math.PI / 3); let r = simulateFlight(enemyObj, [{yaw: tYaw, pitch: tPitch, roll: 0, throttle: testThrottle}]); pathSets.push(r.points); } for (let i = 0; i < segments; i += 2) { threatEnvGroup.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pathSets[i]), lineMat)); } [15, 30].forEach(frame => { let ringPts = []; for (let i = 0; i < segments; i++) ringPts.push(pathSets[i][frame]); ringPts.push(pathSets[0][frame]); threatEnvGroup.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(ringPts), lineMat)); }); }
+        function createEnvelopeNet(testThrottle, lineMat) { 
+            const segments = 16; const pathSets = []; 
+            for (let i = 0; i < segments; i++) { 
+                let angle = (i / segments) * Math.PI * 2; 
+                let tYaw = -Math.cos(angle) * (Math.PI / 4); 
+                let tPitch = Math.sin(angle) * (Math.PI / 3); 
+                let r = simulateFlight(enemyObj, [{yaw: tYaw, pitch: tPitch, roll: 0, throttle: testThrottle}]); 
+                pathSets.push(r.points); 
+            } 
+            for (let i = 0; i < segments; i += 2) { 
+                threatEnvGroup.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pathSets[i]), lineMat)); 
+            } 
+            [15, 30].forEach(frame => { 
+                let ringPts = []; 
+                for (let i = 0; i < segments; i++) ringPts.push(pathSets[i][frame]); 
+                ringPts.push(pathSets[0][frame]); 
+                threatEnvGroup.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(ringPts), lineMat)); 
+            }); 
+        }
         createEnvelopeNet(1, matT1); createEnvelopeNet(2, matT2); createEnvelopeNet(3, matT3); 
         let centerRes = simulateFlight(enemyObj, [{yaw: 0, pitch: 0, roll: 0, throttle: enemyObj.throttle}]);
         let centerLine = new THREE.Line(new THREE.BufferGeometry().setFromPoints(centerRes.points), new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.9 })); 
         threatEnvGroup.add(centerLine); 
-        threatEnvGroup.visible = typeof isEnvelopeVisible !== 'undefined' ? isEnvelopeVisible : true;
+        
+        // 🟢 蜘蛛網顯示權與 userData 開關綁定
+        threatEnvGroup.visible = !!(enemyObj.userData && enemyObj.userData.showEnvelope);
     }
 
-    if (typeof updateTargetingLock === 'function') updateTargetingLock(P); 
-    if (typeof updateMissilePreview === 'function') updateMissilePreview(P); 
-    if (typeof updateGunPreview === 'function') updateGunPreview(P); 
-    if (typeof updateDashboardUI === 'function') updateDashboardUI(P);
-    if (typeof updateDynamicHUD === 'function') updateDynamicHUD(P); 
-}
+    if (typeof updateTargetingLock === 'function') updateTargetingLock(teamObj); 
+    if (typeof updateMissilePreview === 'function') updateMissilePreview(teamObj); 
+    if (typeof updateGunPreview === 'function') updateGunPreview(teamObj); 
+    if (typeof updateDashboardUI === 'function') updateDashboardUI(teamObj);
+    if (typeof updateDynamicHUD === 'function') updateDynamicHUD(); 
+};
 
 function updateTargetingLock(teamObj) {
-    const enemyObj = teamObj.id === 'red' ? teams.blue : teams.red; const btnFireWpn = document.getElementById('btn-fire-wpn');
+    const enemyObj = teamObj.id === 'red' ? teams.blue : teams.red; 
+    const btnFireWpn = document.getElementById('btn-fire-wpn');
     if(!btnFireWpn || !teamObj.wrapper || !enemyObj.wrapper || enemyObj.isDestroyed) return;
     
-    if (teamObj.flaresArmed) { if(!teamObj.wpnQueued) { btnFireWpn.innerText = `🔆 放棄開火 (拋灑誘餌)`; btnFireWpn.style.borderColor = '#ff9800'; btnFireWpn.style.color = '#ff9800'; } return; }
+    if (teamObj.flaresArmed) { 
+        if(!teamObj.wpnQueued) { 
+            btnFireWpn.innerText = `🔆 放棄開火 (拋灑誘餌)`; 
+            btnFireWpn.style.borderColor = '#ff9800'; 
+            btnFireWpn.style.color = '#ff9800'; 
+        } 
+        return; 
+    }
     
-    const distance = teamObj.wrapper.position.distanceTo(enemyObj.wrapper.position); const forward = new THREE.Vector3(0, 0, 1).applyQuaternion(teamObj.wrapper.quaternion).normalize(); const angle = forward.angleTo(new THREE.Vector3().subVectors(enemyObj.wrapper.position, teamObj.wrapper.position).normalize());
-    const exposedHeat = calculateExposedHeat(100 + enemyObj.heat, enemyObj.wrapper.position, enemyObj.wrapper.quaternion, teamObj.wrapper.position);
-
-    let isLocked = false; let statusText = "";
+    const distance = teamObj.wrapper.position.distanceTo(enemyObj.wrapper.position); 
+    const forward = new THREE.Vector3(0, 0, 1).applyQuaternion(teamObj.wrapper.quaternion).normalize(); 
+    const angle = forward.angleTo(new THREE.Vector3().subVectors(enemyObj.wrapper.position, teamObj.wrapper.position).normalize());
+    
+    let isLocked = false; 
     if (teamObj.weapon === 'gun') { 
         let stats = CONFIG.aircrafts[teamObj.type || 'mig21'].throttleStats[teamObj.throttle] || { gunAngleMult: 1.0, gunRangeMult: 1.0 };
         let dRange = GUN_RANGE * stats.gunRangeMult;
@@ -271,9 +344,11 @@ function updateTargetingLock(teamObj) {
             let coneRadius = forwardDist * Math.tan(dAngle);
             isLocked = (expectedBulletPos.distanceTo(enemyObj.wrapper.position) <= coneRadius);
         }
-        
-        statusText = isLocked ? `[LOCKED] 機砲` : `[OUT] 機砲`;
-    } else { btnFireWpn.innerText = `⛔ 取消排程 [${teamObj.weapon === 'gun' ? '機砲' : 'FOX-2'}]`; btnFireWpn.style.borderColor = '#ff0055'; btnFireWpn.style.color = '#fff'; }
+    } else { 
+        btnFireWpn.innerText = `⛔ 取消排程 [${teamObj.weapon === 'gun' ? '機砲' : 'FOX-2'}]`; 
+        btnFireWpn.style.borderColor = '#ff0055'; 
+        btnFireWpn.style.color = '#fff'; 
+    }
 }
 
 // ==========================================
@@ -294,12 +369,12 @@ window.startCombatAnimation = function() {
     if (tagB) tagB.style.display = 'none';
 
     ['red', 'blue'].forEach(id => {
-        if (trajectoryMeshes[id]) trajectoryMeshes[id].visible = false;
+        if (typeof trajectoryMeshes !== 'undefined' && trajectoryMeshes[id]) trajectoryMeshes[id].visible = false;
         if (teams[id].userData && teams[id].userData.gunPreview) teams[id].userData.gunPreview.visible = false;
         if (teams[id].pylons) teams[id].pylons.forEach(p => { if (p.lineMesh) p.lineMesh.visible = false; });
     });
     if (window.ghostWrapper) window.ghostWrapper.visible = false;
-    if (threatEnvGroup) threatEnvGroup.visible = false;
+    if (typeof threatEnvGroup !== 'undefined' && threatEnvGroup) threatEnvGroup.visible = false;
 };
 
 function animate() {
@@ -325,7 +400,6 @@ function animate() {
             });
         });
     }
-    // ==========================================
     
     let now = performance.now();
 
@@ -353,10 +427,9 @@ function animate() {
             exhaust.group.children[1].material.opacity = Math.min(1.0, targetOpacity * 1.2);
         }
     });
-    // ==========================================
 
     if (typeof updateSpatialHelpers === 'function') updateSpatialHelpers();
-    if (typeof updateDynamicHUD === 'function') updateDynamicHUD(P); 
+    if (typeof updateDynamicHUD === 'function') updateDynamicHUD(); 
 
     // ==========================================
     // 1. ACMI 重播模式
@@ -445,6 +518,7 @@ function animate() {
     }
     renderer.render(scene, camera);
 }
+
 // ============================================================================
 // 👇 ACMI 戰術重播系統大腦
 // ============================================================================
@@ -463,12 +537,12 @@ function enterReplayMode() {
         if (rs) { rs.innerText = "🔴 歷史回放中"; rs.style.color = "#ff3355"; }
         
         ['red', 'blue'].forEach(id => {
-            if (trajectoryMeshes[id]) trajectoryMeshes[id].visible = false;
+            if (typeof trajectoryMeshes !== 'undefined' && trajectoryMeshes[id]) trajectoryMeshes[id].visible = false;
             if (teams[id].userData && teams[id].userData.gunPreview) teams[id].userData.gunPreview.visible = false;
             if (teams[id].pylons) teams[id].pylons.forEach(p => { if (p.lineMesh) p.lineMesh.visible = false; });
         });
         if (window.ghostWrapper) window.ghostWrapper.visible = false;
-        if (threatEnvGroup) threatEnvGroup.visible = false;
+        if (typeof threatEnvGroup !== 'undefined' && threatEnvGroup) threatEnvGroup.visible = false;
     }
 }
 
@@ -494,15 +568,8 @@ function exitReplayMode() {
     let sld = document.getElementById('replay-slider');
     if (sld) sld.value = sld.max; 
     
-    ['red', 'blue'].forEach(id => {
-        let t = teams[id];
-        if (t.startPos && t.startQuat && !t.isDestroyed) {
-            t.wrapper.position.copy(t.startPos);
-            t.wrapper.quaternion.copy(t.startQuat);
-        }
-    });
-    
-    updateHUD(); 
+    let currentTeam = typeof tAct !== 'undefined' ? tAct : window.activeTeamId;
+    if (teams[currentTeam]) window.updateTacticalPreview(teams[currentTeam]);
 }
 
 function toggleReplayPlay() {
