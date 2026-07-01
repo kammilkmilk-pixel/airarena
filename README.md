@@ -1,4 +1,128 @@
-# 📖 Air Arena 核心系統字典 (v2.1 Pipeline & StateManger 升級版)
+# 📖 Air Arena 核心系統字典 (v2.2 Stable)
+
+## 目前更新狀態
+
+截至目前，專案已完成以下整理與風險修正：
+
+- **資料夾結構**：`index.html` 引用路徑已對齊 `css/`、`js/`、`assets/vfx/`、`assets/models/`、`assets/interface/`。
+- **啟動方式**：新增 `package.json`，可用 `npm start` 啟動本地伺服器。
+- **資源容錯**：新增 `fallbacks.js`，戰機、城市、VFX 貼圖缺失時可降級運行。
+- **VFX 載入**：`SpriteManager` 會依序嘗試 JSON `meta.image`、標準 PNG 檔名、由 JSON 推導的 PNG，以及小寫變體。
+- **LCOS 修正**：機砲準星大小已改為綁定兩機實際距離，不再受鏡頭遠近影響。
+- **場景光照**：新增天空背景、霧化、地板、半球光、太陽方向光、可見太陽與陰影設定。
+- **地面顯示**：已移除黑色方格 `GridHelper`，保留純地板接收陰影。
+- **Phase 1**：建立 `GameContext`，集中 state / services / three / stateMachine。
+- **Phase 2**：核心狀態寫入改由 `GameContext.stateMachine` 承接，UI 與回合流程不再直接寫主要戰術狀態。
+- **Phase 3**：開始拆分 `TeamState / TeamView`，Three.js 視覺物件逐步移入 `GameContext.view`。
+- **AI MVP**：新增 `js/ai/pilot-ai.js`，RED/BLUE 按鈕可右鍵或雙擊切換 `[PLAYER] / [AI]`，AI 隊伍的下方按鈕會顯示 NPC 行為狀態。
+
+目前仍保留的技術債：
+
+- `pathPoints`、`pathQuats`、`flightCurve`、`activeMissiles` 仍在 team 物件中，屬於模擬/回合 runtime 資料。
+- `render.js`、`combat.js` 還有部分舊式相容 accessor，例如 `team.wrapper`、`pylons[].mesh`。
+- AI 目前是 MVP FSM，包含 `recover`、`cooldown`、`intercept`、`gunAttack`、`missilePrep`、`missileAttack`；後續仍需調參與加入更完整的避障/規避。
+
+## 專案結構
+
+```
+Air-Arena-v2.2-Stable/
+├── index.html              # 遊戲入口
+├── package.json            # npm start 本地伺服器
+├── css/style.css           # 座艙 UI 樣式
+├── js/
+│   ├── game.js             # 主迴圈、模型載入、重播
+│   ├── core/
+│   │   ├── config.js       # 數值、資源路徑、地圖
+│   │   ├── context.js      # GameContext 單一入口 (Phase 1)
+│   │   ├── fallbacks.js    # 資源缺失時的程序化替代
+│   │   └── globals.js      # 全域狀態與 StateMachine
+│   ├── logic/              # 物理、武器、交戰管線
+│   └── view/               # 3D 渲染、HUD、MFD UI
+├── assets/
+│   ├── manifest.json       # 所需資源清單
+│   ├── models/             # .glb 戰機與城市（可選，有 fallback）
+│   ├── vfx/                # 特效 flipbook JSON/PNG
+│   └── interface/          # 座艙底圖 ui_l.png / ui_s.png
+├── tools/vfx-tuner-1to1.html
+└── docs/Tactical-Development-Memo.md
+```
+
+## 快速啟動
+
+```bash
+npm install
+npm start
+```
+
+瀏覽器開啟 `http://localhost:8080/index.html`（**不可**直接雙擊 HTML，需本地伺服器載入 GLB/JSON）。
+
+若未安裝 Node.js，也可使用：`npx serve -l 8080 .`
+
+## 資源缺失行為
+
+| 資源 | 缺失時 |
+|------|--------|
+| 戰機 `.glb` | 使用程序幾何替代機 |
+| `city.glb` | 使用 `config.js` 內建方塊建築群 |
+| VFX PNG | 依序嘗試 JSON `meta.image`、標準檔名、推導檔名與小寫變體，仍失敗則用占位貼圖 |
+| UI 底圖 | 使用純色座艙面板 |
+
+完整清單見 `assets/manifest.json`。
+
+## 狀態寫入規範
+
+Phase 2 起，UI、AI 與回合流程應透過 `GameContext.stateMachine` 寫入核心戰術狀態，避免直接改 `teams.*`。
+
+常用入口：
+
+- `setThrottle(teamId, level)`
+- `setWeaponMode(teamId, weapon)` / `toggleWeaponMode(teamId)`
+- `togglePylonPower(teamId, pylonId)`
+- `queueAction(teamId, action)` / `clearQueuedAction(teamId)`
+- `toggleGunQueue(teamId)` / `toggleMissileQueue(teamId)` / `toggleFlares(teamId)`
+- `setJoystickInput(teamId, joyX, joyY)` / `setRollInput(teamId, roll)`
+- `setReady(teamId, ready)` / `toggleReady(teamId)`
+
+未來 AI 建議只產生「pilot action」，再交給 `GameContext.stateMachine` 套用。
+
+## TeamState / TeamView 分層
+
+Phase 3 起，核心狀態與 Three.js 視覺物件開始分離：
+
+- `GameContext.state.teams`：保留戰術狀態，例如 HP、AP、Heat、Throttle、Weapon、Ready、Pylon state。
+- `GameContext.view.teams`：保存 Three.js 物件，例如 aircraft wrapper、HUD 輔助線、pylon mesh、missile trail。
+- `team.wrapper`、`team.userData`、`team.realBeam` 目前是相容 accessor，實際資料已存放在 TeamView。
+- `pylons[].mesh`、`lineMesh`、`flyingMesh` 等也已透過 pylon view accessor 保存，`pylons[].state` 仍留在 TeamState。
+
+AI 或測試工具應優先使用：
+
+- `GameContext.getSerializableTeamState(teamId)`
+- `GameContext.getSerializableBattleState()`
+
+## AI MVP 操作與行為
+
+- 左鍵 `RED TEAM` / `BLUE TEAM`：切換目前操作隊伍。
+- 右鍵或雙擊 `RED TEAM` / `BLUE TEAM`：切換該隊伍 `[PLAYER] / [AI]`。
+- AI 隊伍的 `規劃中` 按鈕會轉為 NPC 狀態指示器，例如 `NPC: 轉向攔截`、`NPC: 機砲窗口`。
+- 玩家按下待命後，如果對手是 AI，系統會自動執行 AI 決策並讓 AI 進入 ready。
+- AI 行動只透過 `GameContext.stateMachine.applyPilotAction(teamId, action)` 套用。
+
+AI action 格式：
+
+```js
+{
+  state: 'intercept',
+  statusText: 'NPC: 轉向攔截 120m',
+  throttle: 4,
+  joyX: 0.3,
+  joyY: -0.1,
+  roll: 0.12,
+  weapon: 'gun',
+  queueAction: 'none',
+  ready: true,
+  reason: 'Close distance and align nose'
+}
+```
 
 ## 📑 目錄 (Table of Contents)
 1. [✈️ 核心狀態數值 (Core Stats)](#️-核心狀態數值-core-stats)
@@ -36,14 +160,16 @@
 * **Damage Shader (受損塗裝)**: 戰機血量歸零時，利用材質的 RGB Multiplier 動態將機身切換為焦黑塗裝，並關閉尾焰特效。
 
 ### 🧠 模組職責與架構劃分 (Module Architecture)
-*(v2.1 管線化與單向資料流)*
-* **config.js (數據庫)**: 所有魔法數值（速度、傷害、掛架位置、特效上限）都集中於此。
-* **globals.js (狀態中樞)**: 儲存全域狀態 `teams` 與 `battleLog`，**新增 `StateMachine` 作為唯一合法修改資料的閘口 (Gatekeeper)**，避免狀態污染。
+*(v2.2 管線化與單向資料流)*
+* **context.js (應用上下文)**: `GameContext` 收斂 state / services / three，新程式碼的統一入口。
+* **config.js (數據庫)**: 所有魔法數值、資源路徑（`CONFIG.assets`）、掛架位置、特效上限。
+* **fallbacks.js (容錯層)**: 模型/城市/VFX 缺失時的程序化替代方案。
+* **globals.js (狀態初始化)**: 建立 `GameContext.state` 與 `stateMachine`；保留 `@deprecated` 相容別名。
 * **physics.js (物理大腦)**: 提供 `simulateFlight` 與極速光滑插值函數 `getPosAt` / `getQuatAt`。
-* **combat.js (交戰管線)**: 核心結算系統。已升級為流水線架構 (Pipeline)：`processFlightPaths` ➡️ `processFlares` ➡️ `resolveGuns` ➡️ `resolveMissiles` ➡️ `resolveDamageAndDeath`。
-* **render.js (畫家大腦)**: 純粹讀取劇本播放動畫，處理跨回合特效繼承與發光渲染。
-* **ui.js / hud.js (儀表與座艙)**: 處理 MFD 戰術電腦的亮燈邏輯與動態 3D 視角投影。
-* **game.js (應用程序總管)**: 管理 THREE.js 開機載入 (Promise 等待)、主迴圈 `animate()` 與 ACMI 重播時間軸的推進。
+* **combat.js (交戰管線)**: 流水線架構：`processFlightPaths` ➡️ `processFlares` ➡️ `resolveGuns` ➡️ `resolveMissiles` ➡️ `resolveDamageAndDeath`。
+* **render.js (畫家大腦)**: 讀取劇本播放動畫，VFX 載入與城市場景初始化。
+* **ui.js / hud.js (儀表與座艙)**: MFD 戰術電腦與動態 3D HUD 投影。
+* **game.js (應用程序總管)**: THREE.js 開機載入、主迴圈 `animate()` 與 ACMI 重播時間軸。
 
 
 
