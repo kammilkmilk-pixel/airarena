@@ -5,6 +5,51 @@
 function uiCurrentTeamId() { return GameContext.getActiveTeamId(); }
 function uiCurrentTeam() { return GameContext.getActiveTeam(); }
 function uiRefreshPreview(team) { GameContext.callService('updateTacticalPreview', team); }
+function uiTeamLabel(teamId) {
+    const t = teams[teamId];
+    return `${teamId.toUpperCase()} TEAM [${t && t.aiEnabled ? 'AI' : 'PLAYER'}]`;
+}
+function uiRefreshTeamModeButtons() {
+    const btnRed = document.getElementById('btn-sel-red');
+    const btnBlue = document.getElementById('btn-sel-blue');
+    if (btnRed) {
+        btnRed.innerText = uiTeamLabel('red');
+        btnRed.title = '左鍵選擇 RED；右鍵或雙擊切換 PLAYER/AI';
+    }
+    if (btnBlue) {
+        btnBlue.innerText = uiTeamLabel('blue');
+        btnBlue.title = '左鍵選擇 BLUE；右鍵或雙擊切換 PLAYER/AI';
+    }
+}
+function uiToggleAI(teamId) {
+    const t = teams[teamId];
+    if (!t || t.ready || GameContext.isAnimating() || GameContext.isReplayMode()) return;
+    GameContext.stateMachine.toggleAI(teamId);
+    uiRefreshTeamModeButtons();
+    updateDashboardUI(t);
+    uiRefreshPreview(t);
+    showSMSAlert(`${teamId.toUpperCase()} ${t.aiEnabled ? '切換為 NPC AI' : '切換為玩家控制'}`, t.aiEnabled ? '#ffbb00' : '#00ff88');
+}
+function uiRunAI(teamId) {
+    const t = teams[teamId];
+    if (!t || !t.aiEnabled || t.ready || t.isDestroyed || GameContext.isAnimating() || GameContext.isReplayMode()) return false;
+    if (!window.AirArenaAI) return false;
+    const action = window.AirArenaAI.run(teamId);
+    updateDashboardUI(t);
+    uiRefreshPreview(t);
+    return !!action;
+}
+function uiMaybeRunAIAndResolve(teamId) {
+    const t = teams[teamId];
+    if (!t || !t.aiEnabled || t.ready || t.isDestroyed) return false;
+    const didRun = uiRunAI(teamId);
+    if (!didRun) return false;
+    const oppId = teamId === 'red' ? 'blue' : 'red';
+    if (teams[teamId].ready && (teams[oppId].ready || teams[oppId].isDestroyed)) {
+        if (window.executeTurnSimultaneously) window.executeTurnSimultaneously();
+    }
+    return true;
+}
 
 let isDraggingJoystick = false;
 let isDraggingRollRing = false;
@@ -23,12 +68,19 @@ document.addEventListener("DOMContentLoaded", () => {
             if(typeof selectTeam === 'function') selectTeam('red');
             btnRed.style.border = '2px solid #fff'; btnRed.style.color = '#fff'; btnRed.style.background = '#ff0055'; btnRed.style.boxShadow = '0 0 10px rgba(255,0,85,0.5)';
             btnBlue.style.border = '2px solid #444'; btnBlue.style.color = '#00bcd4'; btnBlue.style.background = '#111'; btnBlue.style.boxShadow = 'none';
+            uiRefreshTeamModeButtons();
         });
         btnBlue.addEventListener('click', () => {
             if(typeof selectTeam === 'function') selectTeam('blue');
             btnBlue.style.border = '2px solid #fff'; btnBlue.style.color = '#fff'; btnBlue.style.background = '#00bcd4'; btnBlue.style.boxShadow = '0 0 10px rgba(0,188,212,0.5)';
             btnRed.style.border = '2px solid #444'; btnRed.style.color = '#ff0055'; btnRed.style.background = '#111'; btnRed.style.boxShadow = 'none';
+            uiRefreshTeamModeButtons();
         });
+        btnRed.addEventListener('contextmenu', (e) => { e.preventDefault(); uiToggleAI('red'); });
+        btnBlue.addEventListener('contextmenu', (e) => { e.preventDefault(); uiToggleAI('blue'); });
+        btnRed.addEventListener('dblclick', (e) => { e.preventDefault(); uiToggleAI('red'); });
+        btnBlue.addEventListener('dblclick', (e) => { e.preventDefault(); uiToggleAI('blue'); });
+        uiRefreshTeamModeButtons();
     }
 
     // 🚀 全新節流閥：5 檔磁吸滑軌控制
@@ -40,7 +92,7 @@ document.addEventListener("DOMContentLoaded", () => {
         const updateThrottleLogic = (clientY) => {
             let currentTeam = uiCurrentTeamId();
             let t = teams[currentTeam]; 
-            if (!t || t.isDestroyed || GameContext.isAnimating() || t.ready) return;
+            if (!t || t.aiEnabled || t.isDestroyed || GameContext.isAnimating() || t.ready) return;
             
             const rect = thrTrack.getBoundingClientRect();
             let percent = 1.0 - ((clientY - rect.top) / rect.height);
@@ -87,7 +139,7 @@ document.addEventListener("DOMContentLoaded", () => {
     if(smsContent) smsContent.addEventListener('click', () => {
         let currentTeam = uiCurrentTeamId();
         let t = teams[currentTeam]; 
-        if (!t || GameContext.isAnimating() || GameContext.isReplayMode() || t.isDestroyed || t.ready) return;
+        if (!t || t.aiEnabled || GameContext.isAnimating() || GameContext.isReplayMode() || t.isDestroyed || t.ready) return;
         
         const nextWeapon = GameContext.stateMachine.toggleWeaponMode(currentTeam);
         if (nextWeapon === 'missile') {
@@ -104,7 +156,7 @@ document.addEventListener("DOMContentLoaded", () => {
         el.addEventListener('click', (e) => {
             let currentTeam = uiCurrentTeamId();
             let t = teams[currentTeam]; 
-            if (!t || GameContext.isAnimating() || GameContext.isReplayMode() || t.isDestroyed || t.ready) return;
+            if (!t || t.aiEnabled || GameContext.isAnimating() || GameContext.isReplayMode() || t.isDestroyed || t.ready) return;
             
             if (t.weapon !== 'missile') { showSMSAlert("⚠️ 錯誤：請先將 SMS 切換至飛彈模式", "#ffcc00"); return; }
             if (!t.pylons) { showSMSAlert("🛑 掛架系統尚未初始化", "#ff0055"); return; }
@@ -124,7 +176,7 @@ document.addEventListener("DOMContentLoaded", () => {
     if(btnEnt) btnEnt.addEventListener('click', () => {
         let currentTeam = uiCurrentTeamId();
         let t = teams[currentTeam]; 
-        if (!t || GameContext.isAnimating() || GameContext.isReplayMode() || t.isDestroyed || t.ready) return;
+        if (!t || t.aiEnabled || GameContext.isAnimating() || GameContext.isReplayMode() || t.isDestroyed || t.ready) return;
         
         if (t.weapon === 'gun') {
             const wasQueued = t.wpnQueued && t.queuedAction === 'gun';
@@ -150,7 +202,7 @@ document.addEventListener("DOMContentLoaded", () => {
         btnFlare.addEventListener('click', () => {
             let currentTeam = uiCurrentTeamId();
             let t = teams[currentTeam]; 
-            if (!t || t.isDestroyed || GameContext.isAnimating() || t.ready) return;
+            if (!t || t.aiEnabled || t.isDestroyed || GameContext.isAnimating() || t.ready) return;
             
             if (t.flareAmmo <= 0) { showSMSAlert("🛑 FLARE EMPTY", "#ff0055"); return; }
             const wasArmed = t.flaresArmed;
@@ -165,6 +217,7 @@ document.addEventListener("DOMContentLoaded", () => {
 function toggleReadyState(teamId) {
     let t = teams[teamId]; 
     if (!t || GameContext.isAnimating() || GameContext.isReplayMode() || t.isDestroyed) return;
+    if (t.aiEnabled) return;
 
     const nextReady = !t.ready;
     if (!GameContext.stateMachine.setReady(teamId, nextReady)) return;
@@ -178,6 +231,11 @@ function toggleReadyState(teamId) {
 
     // 檢查另一隊的狀態
     let oppId = teamId === 'red' ? 'blue' : 'red';
+    if (nextReady && teams[oppId] && teams[oppId].aiEnabled && !teams[oppId].ready && !teams[oppId].isDestroyed) {
+        uiMaybeRunAIAndResolve(oppId);
+        return;
+    }
+
     if (nextReady && (teams[oppId].ready || teams[oppId].isDestroyed)) { 
         // 雙方都待命，開始結算回合
         if(window.executeTurnSimultaneously) window.executeTurnSimultaneously();
@@ -208,7 +266,7 @@ if(btnEngageBlue) btnEngageBlue.addEventListener('click', () => toggleReadyState
         function startRoll(clientX, clientY, e) {
             let currentTeam = uiCurrentTeamId();
             let t = teams[currentTeam]; 
-            if (!t || t.isDestroyed || GameContext.isAnimating() || t.ready) return;
+            if (!t || t.aiEnabled || t.isDestroyed || GameContext.isAnimating() || t.ready) return;
             
             isDraggingRollRing = true; if(e && e.stopPropagation) e.stopPropagation(); 
             const rect = staticCenter.getBoundingClientRect(); initialMouseAngle = Math.atan2(clientX - (rect.left + rect.width / 2), -(clientY - (rect.top + rect.height / 2)));
@@ -244,7 +302,7 @@ if(btnEngageBlue) btnEngageBlue.addEventListener('click', () => toggleReadyState
 function startJoystickDrag(e) { 
     let currentTeam = uiCurrentTeamId(); 
     let t = teams[currentTeam]; 
-    if (!t || t.isDestroyed || GameContext.isAnimating() || t.ready) return; 
+    if (!t || t.aiEnabled || t.isDestroyed || GameContext.isAnimating() || t.ready) return; 
     isDraggingJoystick = true; updateJoystickPosition(e); 
 }
 function doJoystickDrag(e) { if (!isDraggingJoystick) return; updateJoystickPosition(e); }
@@ -260,6 +318,7 @@ function updateJoystickPosition(e) {
     let currentTeam = uiCurrentTeamId();
     let t = teams[currentTeam];
     if (t) { 
+        if (t.aiEnabled) return;
         GameContext.stateMachine.setJoystickInput(currentTeam, dx / maxRadius, -dy / maxRadius);
         uiRefreshPreview(t); 
     }
@@ -392,19 +451,29 @@ function updateDashboardUI(teamObj) {
         let btnEngage = document.getElementById(`btn-engage-${id}`);
         let t = teams[id];
         if (btnEngage && t) {
-            if (t.ready) { 
+            if (t.aiEnabled) {
+                const action = t.aiLastAction;
+                const detail = action ? ` | THR ${action.throttle || '-'} | ${action.weapon ? action.weapon.toUpperCase() : 'GUN'}` : '';
+                btnEngage.innerText = `${t.aiStatusText || 'NPC: 待機中'}${detail}`;
+                btnEngage.style.borderColor = '#ffbb00';
+                btnEngage.style.color = '#ffbb00';
+                btnEngage.style.boxShadow = '0 0 10px rgba(255,187,0,0.65), inset 0 0 5px rgba(255,187,0,0.35)';
+                btnEngage.style.cursor = 'default';
+            } else if (t.ready) { 
                 btnEngage.innerText = '待命中'; 
                 // 亮起陣營專屬發光色
                 let glowColor = id === 'red' ? '#ff0055' : '#00bcd4';
                 btnEngage.style.borderColor = glowColor; 
                 btnEngage.style.color = glowColor;
                 btnEngage.style.boxShadow = `0 0 10px ${glowColor}, inset 0 0 5px ${glowColor}`;
+                btnEngage.style.cursor = 'pointer';
             } else { 
                 btnEngage.innerText = '規劃中'; 
                 // 回復樸素狀態
                 btnEngage.style.borderColor = '#aaa'; 
                 btnEngage.style.color = '#fff';
                 btnEngage.style.boxShadow = 'none';
+                btnEngage.style.cursor = 'pointer';
             }
         }
     });

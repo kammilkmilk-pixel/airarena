@@ -46,8 +46,8 @@ state.initialPositions = {
 };
 
 state.teams = {
-    red: { id: 'red', type: 'mig21', colorMain: '#ff0055', wrapper: null, hp: MAX_HP, isDestroyed: false, ap: 120, speed: 120, heat: 0, flameout: false, throttle: 4, chain: [], stalled: false, gLimiterOn: true, weapon: 'gun', wpnQueued: false, flareAmmo: CONFIG.weapons['flare'].maxAmmo, flaresArmed: false, ready: false, pendingPitch: 0, pendingYaw: 0, pendingRoll: 0, pathPoints: [], pathQuats: [], flightCurve: null, pylons: null, activeMissiles: [] },
-    blue: { id: 'blue', type: 'mig21', colorMain: '#00bcd4', wrapper: null, hp: MAX_HP, isDestroyed: false, ap: 120, speed: 120, heat: 0, flameout: false, throttle: 4, chain: [], stalled: false, gLimiterOn: true, weapon: 'gun', wpnQueued: false, flareAmmo: CONFIG.weapons['flare'].maxAmmo, flaresArmed: false, ready: false, pendingPitch: 0, pendingYaw: 0, pendingRoll: 0, pathPoints: [], pathQuats: [], flightCurve: null, pylons: null, activeMissiles: [] }
+    red: { id: 'red', type: 'mig21', colorMain: '#ff0055', wrapper: null, hp: MAX_HP, isDestroyed: false, ap: 120, speed: 120, heat: 0, flameout: false, throttle: 4, chain: [], stalled: false, gLimiterOn: true, weapon: 'gun', wpnQueued: false, flareAmmo: CONFIG.weapons['flare'].maxAmmo, flaresArmed: false, ready: false, aiEnabled: false, aiState: 'player', aiStatusText: 'PLAYER CONTROL', aiLastAction: null, pendingPitch: 0, pendingYaw: 0, pendingRoll: 0, pathPoints: [], pathQuats: [], flightCurve: null, pylons: null, activeMissiles: [] },
+    blue: { id: 'blue', type: 'mig21', colorMain: '#00bcd4', wrapper: null, hp: MAX_HP, isDestroyed: false, ap: 120, speed: 120, heat: 0, flameout: false, throttle: 4, chain: [], stalled: false, gLimiterOn: true, weapon: 'gun', wpnQueued: false, flareAmmo: CONFIG.weapons['flare'].maxAmmo, flaresArmed: false, ready: false, aiEnabled: false, aiState: 'player', aiStatusText: 'PLAYER CONTROL', aiLastAction: null, pendingPitch: 0, pendingYaw: 0, pendingRoll: 0, pathPoints: [], pathQuats: [], flightCurve: null, pylons: null, activeMissiles: [] }
 };
 
 state.activeTeamId = 'red';
@@ -232,6 +232,68 @@ GameContext.stateMachine = {
         const nextLevel = Math.max(1, Math.min(5, Math.round(level)));
         if (nextLevel === 5 && t.heat > 40) return false;
         t.throttle = nextLevel;
+        return true;
+    },
+
+    setAIEnabled(teamId, enabled) {
+        const t = this.getTeamOrNull(teamId);
+        if (!t || GameContext.isAnimating() || GameContext.isReplayMode()) return false;
+        t.aiEnabled = !!enabled;
+        t.aiState = t.aiEnabled ? 'idle' : 'player';
+        t.aiStatusText = t.aiEnabled ? 'NPC: 待機中' : 'PLAYER CONTROL';
+        t.aiLastAction = null;
+        if (t.aiEnabled) {
+            t.ready = false;
+            this.clearQueuedAction(teamId);
+            this.resetPilotInput(teamId);
+        }
+        return true;
+    },
+
+    toggleAI(teamId) {
+        const t = this.getTeamOrNull(teamId);
+        if (!t) return false;
+        return this.setAIEnabled(teamId, !t.aiEnabled);
+    },
+
+    setAIStatus(teamId, state, text, action = null) {
+        const t = this.getTeamOrNull(teamId);
+        if (!t) return false;
+        t.aiState = state || 'idle';
+        t.aiStatusText = text || `NPC: ${t.aiState}`;
+        if (action) t.aiLastAction = action;
+        return true;
+    },
+
+    applyPilotAction(teamId, action) {
+        const t = this.getTeamOrNull(teamId);
+        if (!t || !action || t.isDestroyed) return false;
+
+        this.setAIStatus(teamId, action.state || 'thinking', action.statusText || action.reason || 'NPC: 決策中', action);
+
+        if (typeof action.throttle === 'number') this.setThrottle(teamId, action.throttle);
+        if (typeof action.joyX === 'number' || typeof action.joyY === 'number') {
+            this.setJoystickInput(teamId, action.joyX || 0, action.joyY || 0);
+        }
+        if (typeof action.roll === 'number') this.setRollInput(teamId, action.roll);
+        if (action.weapon) this.setWeaponMode(teamId, action.weapon);
+
+        if (action.powerPylons && t.pylons) {
+            t.pylons.forEach(p => {
+                if (p.state === 'standby') this.togglePylonPower(teamId, p.id);
+            });
+        }
+
+        if (action.queueAction) {
+            if (action.queueAction === 'gun') this.queueAction(teamId, 'gun');
+            else if (action.queueAction === 'missile') this.toggleMissileQueue(teamId);
+            else if (action.queueAction === 'flare') this.toggleFlares(teamId);
+            else this.clearQueuedAction(teamId);
+        } else {
+            this.clearQueuedAction(teamId);
+        }
+
+        if (action.ready) this.setReady(teamId, true);
         return true;
     },
 

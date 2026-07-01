@@ -1,5 +1,27 @@
 # 📖 Air Arena 核心系統字典 (v2.2 Stable)
 
+## 目前更新狀態
+
+截至目前，專案已完成以下整理與風險修正：
+
+- **資料夾結構**：`index.html` 引用路徑已對齊 `css/`、`js/`、`assets/vfx/`、`assets/models/`、`assets/interface/`。
+- **啟動方式**：新增 `package.json`，可用 `npm start` 啟動本地伺服器。
+- **資源容錯**：新增 `fallbacks.js`，戰機、城市、VFX 貼圖缺失時可降級運行。
+- **VFX 載入**：`SpriteManager` 會依序嘗試 JSON `meta.image`、標準 PNG 檔名、由 JSON 推導的 PNG，以及小寫變體。
+- **LCOS 修正**：機砲準星大小已改為綁定兩機實際距離，不再受鏡頭遠近影響。
+- **場景光照**：新增天空背景、霧化、地板、半球光、太陽方向光、可見太陽與陰影設定。
+- **地面顯示**：已移除黑色方格 `GridHelper`，保留純地板接收陰影。
+- **Phase 1**：建立 `GameContext`，集中 state / services / three / stateMachine。
+- **Phase 2**：核心狀態寫入改由 `GameContext.stateMachine` 承接，UI 與回合流程不再直接寫主要戰術狀態。
+- **Phase 3**：開始拆分 `TeamState / TeamView`，Three.js 視覺物件逐步移入 `GameContext.view`。
+- **AI MVP**：新增 `js/ai/pilot-ai.js`，RED/BLUE 按鈕可右鍵或雙擊切換 `[PLAYER] / [AI]`，AI 隊伍的下方按鈕會顯示 NPC 行為狀態。
+
+目前仍保留的技術債：
+
+- `pathPoints`、`pathQuats`、`flightCurve`、`activeMissiles` 仍在 team 物件中，屬於模擬/回合 runtime 資料。
+- `render.js`、`combat.js` 還有部分舊式相容 accessor，例如 `team.wrapper`、`pylons[].mesh`。
+- AI 目前是 MVP FSM，包含 `recover`、`cooldown`、`intercept`、`gunAttack`、`missilePrep`、`missileAttack`；後續仍需調參與加入更完整的避障/規避。
+
 ## 專案結構
 
 ```
@@ -42,7 +64,7 @@ npm start
 |------|--------|
 | 戰機 `.glb` | 使用程序幾何替代機 |
 | `city.glb` | 使用 `config.js` 內建方塊建築群 |
-| VFX PNG | 從 JSON `meta.image` 解析路徑，仍失敗則用占位貼圖 |
+| VFX PNG | 依序嘗試 JSON `meta.image`、標準檔名、推導檔名與小寫變體，仍失敗則用占位貼圖 |
 | UI 底圖 | 使用純色座艙面板 |
 
 完整清單見 `assets/manifest.json`。
@@ -76,6 +98,31 @@ AI 或測試工具應優先使用：
 
 - `GameContext.getSerializableTeamState(teamId)`
 - `GameContext.getSerializableBattleState()`
+
+## AI MVP 操作與行為
+
+- 左鍵 `RED TEAM` / `BLUE TEAM`：切換目前操作隊伍。
+- 右鍵或雙擊 `RED TEAM` / `BLUE TEAM`：切換該隊伍 `[PLAYER] / [AI]`。
+- AI 隊伍的 `規劃中` 按鈕會轉為 NPC 狀態指示器，例如 `NPC: 轉向攔截`、`NPC: 機砲窗口`。
+- 玩家按下待命後，如果對手是 AI，系統會自動執行 AI 決策並讓 AI 進入 ready。
+- AI 行動只透過 `GameContext.stateMachine.applyPilotAction(teamId, action)` 套用。
+
+AI action 格式：
+
+```js
+{
+  state: 'intercept',
+  statusText: 'NPC: 轉向攔截 120m',
+  throttle: 4,
+  joyX: 0.3,
+  joyY: -0.1,
+  roll: 0.12,
+  weapon: 'gun',
+  queueAction: 'none',
+  ready: true,
+  reason: 'Close distance and align nose'
+}
+```
 
 ## 📑 目錄 (Table of Contents)
 1. [✈️ 核心狀態數值 (Core Stats)](#️-核心狀態數值-core-stats)

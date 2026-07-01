@@ -126,10 +126,15 @@ window.GameContext = {
     getSerializableTeamState(id) {
         const team = this.getTeam(id);
         if (!team) return null;
+        const wrapper = this.getTeamWrapper(id);
+        const position = wrapper ? wrapper.position : null;
+        const forward = wrapper ? new THREE.Vector3(0, 0, 1).applyQuaternion(wrapper.quaternion).normalize() : null;
 
         return {
             id: team.id,
             type: team.type,
+            position: position ? { x: position.x, y: position.y, z: position.z } : null,
+            forward: forward ? { x: forward.x, y: forward.y, z: forward.z } : null,
             hp: team.hp,
             isDestroyed: team.isDestroyed,
             ap: team.ap,
@@ -145,6 +150,9 @@ window.GameContext = {
             flareAmmo: team.flareAmmo,
             flaresArmed: team.flaresArmed,
             ready: team.ready,
+            aiEnabled: !!team.aiEnabled,
+            aiState: team.aiState || 'player',
+            aiStatusText: team.aiStatusText || 'PLAYER CONTROL',
             pendingPitch: team.pendingPitch,
             pendingYaw: team.pendingYaw,
             pendingRoll: team.pendingRoll,
